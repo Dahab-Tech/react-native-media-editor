@@ -1,5 +1,5 @@
 import { useImage, type SkImage } from '@shopify/react-native-skia';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { useEditorTheme } from '../../core/theming/ThemeContext';
@@ -12,45 +12,24 @@ import {
   type PhotoEditorState,
 } from '../../photo/state/photoEditorState';
 import { EffectsTool } from '../../photo/tools/EffectsTool';
-import { getVideoThumbnail } from '../api';
 import type { VideoEditorController } from '../state/videoEditorState';
 
 export interface VideoEffectsToolProps {
   controller: VideoEditorController;
-  /** Video source URI. */
-  source: string;
-  /** Poster sample time (ms). Defaults to 0. */
-  posterTimeMs?: number;
+  /** Poster frame URI, prefetched by the editor; `null` while still loading. */
+  posterUri: string | null;
   filterPacks?: readonly PhotoFilterPack[];
   overlayPacks?: readonly PhotoOverlayPack[];
 }
 
-/** Video-side wrapper around the photo `EffectsTool`. Extracts a poster SkImage for the filter thumbnail strip. */
+/** Video-side wrapper around the photo `EffectsTool`, fed a prefetched poster SkImage for the filter thumbnail strip. */
 export function VideoEffectsTool({
   controller,
-  source,
-  posterTimeMs = 0,
+  posterUri,
   filterPacks,
   overlayPacks,
 }: VideoEffectsToolProps) {
   const theme = useEditorTheme();
-  const [posterUri, setPosterUri] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Small poster — thumbnails downsample to 64px anyway.
-    getVideoThumbnail(source, { timeMs: posterTimeMs, maxWidth: 512, quality: 0.85 })
-      .then((r) => {
-        if (!cancelled) setPosterUri(r.uri);
-      })
-      .catch(() => {
-        if (!cancelled) setPosterUri(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source, posterTimeMs]);
-
   const posterImage = useImage(posterUri ?? undefined);
 
   const { filterId, filterIntensity, overlayId, overlayIntensity } = controller.state;

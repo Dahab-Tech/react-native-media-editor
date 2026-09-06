@@ -99,16 +99,18 @@ export function ColorPreviewCanvas({
   useEffect(() => {
     pausedSv.value = paused;
   }, [paused, pausedSv]);
-  useEffect(() => {
-    if (seek != null) seekSv.value = seek.seconds;
-  }, [seek, seekSv]);
-
-  const { currentFrame, rotation, size } = useVideo(source, {
+  const { currentFrame, rotation, size, duration } = useVideo(source, {
     paused: pausedSv,
     seek: seekSv,
     looping: loopingSv,
     volume: volumeSv,
   });
+
+  // useVideo silently drops seeks issued before the decoder loads; the ready dep re-applies the last one.
+  const decoderReady = duration > 0;
+  useEffect(() => {
+    if (seek != null && decoderReady) seekSv.value = seek.seconds;
+  }, [seek, seekSv, decoderReady]);
 
   const filterDefinition = useMemo(
     () => resolveFilter(filterId, filterPacks),

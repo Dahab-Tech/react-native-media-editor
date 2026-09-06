@@ -11,6 +11,9 @@ All notable changes to `@dahab-tech/react-native-media-editor` follow [Keep a Ch
 
 ### Fixed
 - Video editor: the trim bar no longer renders underneath other tools' panels — it also intercepted touches, making the effects samples strip and intensity slider untappable.
+- Video effects panel: touches landed offset from the visuals (the panel resized mid slide-in animation once its poster loaded), so taps hit the wrong item and the intensity slider wouldn't move. The poster is now prefetched and panels fade in instead of sliding.
+- Video color preview: the Skia preview decoder no longer runs while no filter/adjustment is active — it decoded continuously on the UI thread, draining battery and delaying touch delivery.
+- Android: thumbnail generation now recycles its bitmaps, fixing a native memory leak (including on error paths).
 - Video editor: the play/pause button now clears the collapsed panel strip instead of sitting partially behind it.
 - Video crop: panning the video under the crop window no longer moves in the inverted direction.
 - Video color preview: rotated source videos now render with the correct orientation (Skia decodes unrotated frames; the display rotation is applied explicitly).

@@ -33,18 +33,24 @@ object ThumbnailGenerator {
       frame
     }
 
-    val outputFile = cacheFile(context, "cover", "jpg")
-    FileOutputStream(outputFile).use { stream ->
-      val quality = (options.quality * 100).roundToInt().coerceIn(0, 100)
-      if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
-        throw MediaEditorException("ERR_THUMBNAIL", "Could not encode the thumbnail")
+    try {
+      val outputFile = cacheFile(context, "cover", "jpg")
+      FileOutputStream(outputFile).use { stream ->
+        val quality = (options.quality * 100).roundToInt().coerceIn(0, 100)
+        if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
+          throw MediaEditorException("ERR_THUMBNAIL", "Could not encode the thumbnail")
+        }
       }
-    }
 
-    return mapOf(
-      "uri" to Uri.fromFile(outputFile).toString(),
-      "width" to bitmap.width,
-      "height" to bitmap.height,
-    )
+      return mapOf(
+        "uri" to Uri.fromFile(outputFile).toString(),
+        "width" to bitmap.width,
+        "height" to bitmap.height,
+      )
+    } finally {
+      // createScaledBitmap may return the same instance when no rescale is needed; avoid double-recycle.
+      if (bitmap !== frame) frame.recycle()
+      bitmap.recycle()
+    }
   }
 }

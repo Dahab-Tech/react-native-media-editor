@@ -13,8 +13,7 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
-  SlideInDown,
-  SlideOutDown,
+  FadeIn,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
@@ -674,7 +673,9 @@ function VideoEditorScreen({
     state.filterId !== ORIGINAL_FILTER_ID ||
     anyNonNeutral(Object.keys(NEUTRAL_ADJUSTMENTS) as PhotoAdjustmentKey[], state.adjustments) ||
     state.overlayId != null;
-  const colorPreviewMounted = info != null && videoDisplayRect.width > 0;
+  // Mounted only while the pipeline is active: useVideo's frame pump ticks at 60fps on the
+  // UI thread for as long as it's mounted (it ignores `paused`), starving panel touches.
+  const colorPreviewMounted = info != null && videoDisplayRect.width > 0 && colorPipelineActive;
   const nativeVideoHidden = false;
   // On pause, snap the Skia decoder to the player position so the frozen graded frame matches the audio/native frame.
   useEffect(() => {
@@ -684,10 +685,33 @@ function VideoEditorScreen({
     return () => subscription.remove();
   }, [player]);
 
+  // Prefetched at mount so the effects panel renders in one phase; swapping a spinner for
+  // taller content mid-entering-animation left the panel's hit-test region offset from its visuals.
+  const [effectsPosterUri, setEffectsPosterUri] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getVideoThumbnail(source, { timeMs: 0, maxWidth: 512, quality: 0.85 })
+      .then((r) => {
+        if (!cancelled) setEffectsPosterUri(r.uri);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+
   // Two-surface design: native VideoView is the always-visible base; Skia fades in on top only when the color pipeline is active and not scrubbing, because the Skia decoder can't reliably re-seek.
   // Skia's decoder has no rate control, so during speeded playback the native surface shows instead.
   const skiaOpacityTarget =
     colorPipelineActive && scrubSeconds == null && (state.speed === 1 || !isPlaying) ? 1 : 0;
+  // Skia's useVideo pumps frames on the UI thread — the same thread that delivers touches.
+  // Keep the decoder paused while its surface is invisible, or an idle pipeline starves
+  // taps/slider drags in the tool panels; snap to the player position when it fades in.
+  const skiaDecoderPaused = !isPlaying || skiaOpacityTarget === 0;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing the external Skia decoder to the imperative player clock, not deriving state
+    if (skiaOpacityTarget === 1) setSyncSeek({ seconds: player.currentTime });
+  }, [skiaOpacityTarget, player]);
   const skiaOpacity = useSharedValue(skiaOpacityTarget);
   useEffect(() => {
     skiaOpacity.value = withTiming(skiaOpacityTarget, { duration: 250 });
@@ -734,7 +758,7 @@ function VideoEditorScreen({
             <ColorPreviewCanvas
               source={source}
               rect={videoDisplayRect}
-              paused={!isPlaying}
+              paused={skiaDecoderPaused}
               seek={scrubSeek ?? syncSeek}
               // Raw source dims; crop clipping handled internally via the `crop` prop.
               videoWidth={info.width}
@@ -954,7 +978,7 @@ function VideoEditorScreen({
           <ToolPanel onDismiss={() => setPanelHidden(true)}>
             <VideoEffectsTool
               controller={controller}
-              source={source}
+              posterUri={effectsPosterUri}
               filterPacks={filterPacks}
               overlayPacks={overlayPacks}
             />
@@ -1043,16 +1067,13 @@ function VideoEditorScreen({
 }
 
 const PANEL_ENTER_MS = 220;
-const PANEL_EXIT_MS = 180;
 
+// Fade only, no exit: transform-based slide diverged hit-testing from visuals when panel
+// content resized mid-animation, and exit ghosts swallowed taps on the replacing panel.
 function FloatingPanel({ children, bottom }: { children: React.ReactNode; bottom: number }) {
   return (
     <View pointerEvents="box-none" style={[styles.floatingPanelWrapper, { bottom }]}>
-      <Animated.View
-        entering={SlideInDown.duration(PANEL_ENTER_MS)}
-        exiting={SlideOutDown.duration(PANEL_EXIT_MS)}>
-        {children}
-      </Animated.View>
+      <Animated.View entering={FadeIn.duration(PANEL_ENTER_MS)}>{children}</Animated.View>
     </View>
   );
 }
