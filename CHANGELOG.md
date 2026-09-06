@@ -3,6 +3,8 @@
 All notable changes to `@dahab-tech/react-native-media-editor` follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and semver.
 
 ## [Unreleased]
+
+## [0.2.0] — 2026-09-06
 ### Added
 - **Video compression**: opt-in `compression` option on `trimVideo` and `<VideoEditor>` (`preset: 'high' | 'medium' | 'low'`, `maxDimension`, `bitrateMbps`). Presence forces a re-encode; omitted keeps the existing lossless-passthrough behavior. iOS uses an AVAssetReader/AVAssetWriter H.264 pipeline; Android uses Media3 `DefaultEncoderFactory` + `Presentation` for the long-edge cap. Audio re-encodes to AAC 128 kbps.
 - Photo crop tool: confirm (✓) action in the crop panel to apply the session and close the tool.
