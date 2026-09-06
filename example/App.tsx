@@ -1,0 +1,259 @@
+import {
+  PhotoEditor,
+  type PhotoExportResult,
+} from '@dahab-tech/react-native-media-editor/photoEditor';
+import {
+  VideoEditor,
+  type ThumbnailResult,
+  type TrimResult,
+} from '@dahab-tech/react-native-media-editor/videoEditor';
+import * as ImagePicker from 'expo-image-picker';
+import { useState } from 'react';
+import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+
+import { ConfigPanel } from './ConfigPanel';
+import {
+  DEFAULT_CONFIG,
+  photoEditorProps,
+  sharedEditorProps,
+  videoEditorProps,
+  type PlaygroundConfig,
+} from './editorConfig';
+
+type Screen =
+  | { kind: 'home' }
+  | { kind: 'video'; uri: string }
+  | { kind: 'photo'; uri: string }
+  | { kind: 'photoMulti'; assets: readonly { uri: string }[] };
+
+export default function App() {
+  const [screen, setScreen] = useState<Screen>({ kind: 'home' });
+  const [config, setConfig] = useState<PlaygroundConfig>(DEFAULT_CONFIG);
+  const [trimResult, setTrimResult] = useState<TrimResult | null>(null);
+  const [cover, setCover] = useState<ThumbnailResult | null>(null);
+  const [photo, setPhoto] = useState<PhotoExportResult | readonly PhotoExportResult[] | null>(null);
+
+  const pickMedia = async (kind: 'video' | 'photo') => {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Media library access is needed.');
+      return;
+    }
+    const multiPhoto = kind === 'photo' && config.photoMultiSelect;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: kind === 'video' ? ['videos'] : ['images'],
+      // Skia can't decode HEIC; Compatible mode transcodes to JPEG on iOS 14+.
+      preferredAssetRepresentationMode:
+        ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      ...(multiPhoto ? { allowsMultipleSelection: true, selectionLimit: 10 } : null),
+    });
+    if (result.canceled || !result.assets[0]) return;
+    if (kind === 'video') {
+      setScreen({ kind: 'video', uri: result.assets[0].uri });
+      return;
+    }
+    if (multiPhoto && result.assets.length > 1) {
+      setScreen({ kind: 'photoMulti', assets: result.assets.map((a) => ({ uri: a.uri })) });
+    } else {
+      setScreen({ kind: 'photo', uri: result.assets[0].uri });
+    }
+  };
+
+  if (screen.kind === 'video') {
+    return (
+      <VideoEditor
+        source={screen.uri}
+        {...sharedEditorProps(config)}
+        {...videoEditorProps(config)}
+        onCancel={() => setScreen({ kind: 'home' })}
+        onExport={(result) => {
+          setTrimResult(result);
+          setScreen({ kind: 'home' });
+        }}
+        onCoverSelected={(result) => setCover(result)}
+        onError={(error) => Alert.alert('Video editor error', error.message)}
+      />
+    );
+  }
+
+  if (screen.kind === 'photo') {
+    return (
+      <PhotoEditor
+        source={screen.uri}
+        {...sharedEditorProps(config)}
+        {...photoEditorProps(config)}
+        onCancel={() => setScreen({ kind: 'home' })}
+        onExport={(result) => {
+          setPhoto(result);
+          setScreen({ kind: 'home' });
+        }}
+        onError={(error) => Alert.alert('Photo editor error', error.message)}
+      />
+    );
+  }
+
+  if (screen.kind === 'photoMulti') {
+    return (
+      <PhotoEditor
+        source={screen.assets}
+        {...sharedEditorProps(config)}
+        {...photoEditorProps(config)}
+        onCancel={() => setScreen({ kind: 'home' })}
+        onExport={(results) => {
+          setPhoto(results);
+          setScreen({ kind: 'home' });
+        }}
+        onError={(error) => Alert.alert('Photo editor error', error.message)}
+      />
+    );
+  }
+
+  return (
+    <SafeAreaProvider>
+      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>@dahab-tech/react-native-media-editor</Text>
+            <Pressable
+              style={styles.localeToggle}
+              onPress={() => setConfig({ ...config, locale: config.locale === 'en' ? 'ar' : 'en' })}
+              accessibilityRole="button"
+              accessibilityLabel={`Locale: ${config.locale === 'en' ? 'English' : 'Arabic'}. Tap to switch.`}>
+              <Text
+                style={[
+                  styles.localeSegment,
+                  config.locale === 'en' && styles.localeSegmentActive,
+                ]}>
+                EN
+              </Text>
+              <Text
+                style={[
+                  styles.localeSegment,
+                  config.locale === 'ar' && styles.localeSegmentActive,
+                ]}>
+                عربي
+              </Text>
+            </Pressable>
+          </View>
+
+          <ConfigPanel config={config} onChange={setConfig} />
+
+          {trimResult && (
+            <View style={styles.result}>
+              <Text style={styles.resultTitle}>Trimmed video</Text>
+              <Text style={styles.resultText}>
+                {Math.round(trimResult.durationMs / 1000)}s — {trimResult.uri}
+              </Text>
+            </View>
+          )}
+
+          {cover && (
+            <View style={styles.result}>
+              <Text style={styles.resultTitle}>Selected cover</Text>
+              <Image source={{ uri: cover.uri }} style={styles.preview} resizeMode="cover" />
+            </View>
+          )}
+
+          {photo && <PhotoResultPanel result={photo} />}
+        </ScrollView>
+
+        <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
+          <Pressable style={styles.button} onPress={() => pickMedia('video')}>
+            <Text style={styles.buttonText}>Open Video Editor</Text>
+          </Pressable>
+          <Pressable style={styles.button} onPress={() => pickMedia('photo')}>
+            <Text style={styles.buttonText}>Open Photo Editor</Text>
+          </Pressable>
+        </SafeAreaView>
+      </SafeAreaView>
+    </SafeAreaProvider>
+  );
+}
+
+function PhotoResultPanel({
+  result,
+}: {
+  result: PhotoExportResult | readonly PhotoExportResult[];
+}) {
+  if (Array.isArray(result)) {
+    return (
+      <View style={styles.result}>
+        <Text style={styles.resultTitle}>Exported {result.length} photos</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.thumbStrip}>
+          {result.map((entry, i) => (
+            <Image
+              key={`${entry.uri}-${i}`}
+              source={{ uri: entry.uri }}
+              style={styles.thumb}
+              resizeMode="cover"
+            />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }
+  const one = result as PhotoExportResult;
+  return (
+    <View style={styles.result}>
+      <Text style={styles.resultTitle}>
+        Exported photo ({one.format}, {one.width}×{one.height})
+      </Text>
+      <Image source={{ uri: one.uri }} style={styles.preview} resizeMode="cover" />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#0E0E11' },
+  scrollContent: { padding: 20, gap: 12 },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginVertical: 16,
+  },
+  title: { color: '#FFFFFF', fontSize: 20, fontWeight: '700', flexShrink: 1 },
+  localeToggle: {
+    flexDirection: 'row',
+    backgroundColor: '#1B1B20',
+    borderRadius: 8,
+    padding: 3,
+    gap: 3,
+  },
+  localeSegment: {
+    color: '#9A9AA3',
+    fontSize: 12,
+    fontWeight: '600',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  localeSegmentActive: { backgroundColor: '#FFCE0A', color: '#17171C' },
+  bottomBar: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    gap: 10,
+    backgroundColor: '#0E0E11',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#26262C',
+  },
+  button: {
+    backgroundColor: '#1B1B20',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  buttonText: { color: '#FFCE0A', fontSize: 16, fontWeight: '600' },
+  result: { backgroundColor: '#1B1B20', borderRadius: 10, padding: 12, gap: 8 },
+  resultTitle: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  resultText: { color: '#9A9AA3', fontSize: 12 },
+  preview: { width: '100%', height: 160, borderRadius: 6 },
+  thumbStrip: { gap: 8 },
+  thumb: { width: 72, height: 72, borderRadius: 6 },
+});

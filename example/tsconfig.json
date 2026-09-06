@@ -1,0 +1,11 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@dahab-tech/react-native-media-editor": ["../src/index"],
+      "@dahab-tech/react-native-media-editor/photoEditor": ["../src/photo/index"],
+      "@dahab-tech/react-native-media-editor/videoEditor": ["../src/video/index"]
+    }
+  }
+}

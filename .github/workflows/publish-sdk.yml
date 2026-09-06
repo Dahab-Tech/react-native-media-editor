@@ -1,0 +1,99 @@
+name: Publish SDK
+
+# Publish @dahab-tech/react-native-media-editor to the PUBLIC npm registry on
+# tag push.
+#
+# Tagging convention: `vX.Y.Z` (e.g. `v0.1.0`). This repo IS the SDK, so no
+# `sdk-` or product prefix is needed — the plain `v*` scheme keeps release
+# tags aligned with the GitHub Releases UI's default expectations.
+#
+# Versioning rules (semver):
+#   • Bump PATCH for bug fixes that don't change the public surface.
+#   • Bump MINOR for new fields/methods that are additive (existing
+#     consumers keep working without code changes).
+#   • Bump MAJOR for breaking changes (renamed exports, removed props,
+#     changed semantics). Consumers pin to the major version.
+#
+# Manual release flow:
+#   1. Bump `package.json` "version" to e.g. 0.2.0 + commit.
+#   2. `npm run publish-sdk` — creates + pushes the `vX.Y.Z` tag.
+#   3. This workflow runs → builds + publishes to npmjs.
+#
+# Consumers install with (no tokens, no .npmrc):
+#   npx expo install @dahab-tech/react-native-media-editor
+#
+# Auth: needs an npm "Automation" access token for an account with publish
+# rights on the @dahab-tech scope, stored as the repo secret
+# NPM_PUBLISH_TOKEN (Settings → Secrets and variables → Actions). The
+# scope owner (DahabTech) already provisions this token for the sibling
+# @dahab-tech/altaer-sdk workflow — same token, same scope.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Confine permissions to only what's required. Anything not listed is
+# explicitly denied — defense in depth in case the workflow gets
+# tampered with.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build + publish to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Setup Node with the public registry pre-configured. The
+      # `always-auth: true` writes the token into ~/.npmrc so
+      # `npm publish` picks it up without any extra config.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@dahab-tech'
+          always-auth: true
+
+      # Verify the tag matches the package.json version. Mismatch is
+      # almost always a developer mistake (forgot to bump version
+      # before tagging) and would publish the WRONG version to the
+      # registry. Fail loud before anything ships.
+      - name: Verify tag matches package version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)."
+            echo "Bump package.json to $TAG_VERSION and re-tag, or update the tag."
+            exit 1
+          fi
+          echo "✓ Versions match: $PKG_VERSION"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      # Publish. The `prepublishOnly` script in package.json re-runs
+      # clean + build, so even if the build/ in CI were stale we'd get
+      # fresh output before the publish.
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+
+      - name: Summary
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "### ✅ Published @dahab-tech/react-native-media-editor@${PKG_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "npx expo install @dahab-tech/react-native-media-editor@${PKG_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

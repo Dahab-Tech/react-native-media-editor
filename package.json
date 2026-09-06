@@ -1,0 +1,136 @@
+{
+  "name": "@dahab-tech/react-native-media-editor",
+  "version": "0.1.0",
+  "description": "Customizable photo & video editor for Expo / React Native with RTL support",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "default": "./build/index.js"
+    },
+    "./photoEditor": {
+      "types": "./build/photo/index.d.ts",
+      "default": "./build/photo/index.js"
+    },
+    "./videoEditor": {
+      "types": "./build/video/index.d.ts",
+      "default": "./build/video/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "build",
+    "android",
+    "!android/build",
+    "ios",
+    "!ios/build",
+    "expo-module.config.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node internal/module_scripts/build.js",
+    "clean": "node internal/module_scripts/clean.js",
+    "lint": "eslint src/ 'example/*.ts' 'example/*.tsx'",
+    "test": "node internal/module_scripts/test.js",
+    "prepare": "node internal/module_scripts/prepare.js",
+    "prepublishOnly": "npm run clean && npm run build",
+    "publish-sdk": "V=$(node -p \"require('./package.json').version\") && echo \"→ tagging v$V and pushing (CI will publish)\" && git tag v$V && git push origin v$V",
+    "open:ios": "node internal/module_scripts/open-ios.js",
+    "open:android": "node internal/module_scripts/open-android.js"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "photo-editor",
+    "video-editor",
+    "media-editor",
+    "image-editor",
+    "video-trim",
+    "crop",
+    "filters",
+    "stickers",
+    "rtl",
+    "arabic"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dahab-Tech/react-native-media-editor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Dahab-Tech/react-native-media-editor/issues"
+  },
+  "author": "DahabTech LLC <dahabtech.llc@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://dahab-tech.com/apps/react-native-media-editor",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@expo/vector-icons": "^15.1.1",
+    "@shopify/react-native-skia": "^2.6.2",
+    "@types/jest": "^29.2.1",
+    "@types/react": "~19.1.1",
+    "babel-preset-expo": "~55.0.8",
+    "eslint": "~9.39.4",
+    "eslint-config-universe": "^15.0.3",
+    "expo": "^57.0.13",
+    "expo-font": "~57.0.1",
+    "expo-video": "~57.0.2",
+    "jest": "^29.7.0",
+    "jest-expo": "~55.0.9",
+    "prettier": "^3.0.0",
+    "react-native": "0.82.1",
+    "react-native-gesture-handler": "~2.24.0",
+    "react-native-reanimated": "~4.1.1",
+    "react-native-safe-area-context": "^5.9.1",
+    "typescript": "^5.9.2"
+  },
+  "jest": {
+    "preset": "jest-expo",
+    "roots": [
+      "<rootDir>/src"
+    ]
+  },
+  "peerDependencies": {
+    "@expo/vector-icons": ">=14.0.0",
+    "@shopify/react-native-skia": ">=1.5.0",
+    "expo": "*",
+    "expo-font": ">=14.0.4",
+    "expo-video": ">=2.0.0",
+    "react": "*",
+    "react-native": "*",
+    "react-native-gesture-handler": ">=2.16.0",
+    "react-native-reanimated": ">=3.10.0",
+    "react-native-safe-area-context": ">=4.5.0"
+  },
+  "peerDependenciesMeta": {
+    "@expo/vector-icons": {
+      "optional": true
+    },
+    "@shopify/react-native-skia": {
+      "optional": true
+    },
+    "expo-font": {
+      "optional": true
+    },
+    "expo-video": {
+      "optional": true
+    },
+    "react-native-gesture-handler": {
+      "optional": true
+    },
+    "react-native-reanimated": {
+      "optional": true
+    },
+    "react-native-safe-area-context": {
+      "optional": true
+    }
+  }
+}

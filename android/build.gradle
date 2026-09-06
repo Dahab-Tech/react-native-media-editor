@@ -1,0 +1,26 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.dahabtech.mediaeditor'
+version = '0.1.0'
+
+android {
+  namespace "com.dahabtech.mediaeditor"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  // Keep in sync with the media3 version used by expo-video to avoid resolution conflicts.
+  def media3Version = "1.9.0"
+  implementation "androidx.media3:media3-common:${media3Version}"
+  implementation "androidx.media3:media3-transformer:${media3Version}"
+  implementation "androidx.media3:media3-effect:${media3Version}"
+}
