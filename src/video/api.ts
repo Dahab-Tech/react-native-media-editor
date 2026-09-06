@@ -12,7 +12,11 @@ export function getVideoInfo(uri: string): Promise<VideoInfo> {
   return MediaEditorModule.getVideoInfo(uri);
 }
 
-/** Trims the video to [startMs, endMs]. Providing `crop` (or any non-trim option) forces a re-encode; pure trims use lossless passthrough on iOS. */
+/**
+ * Trims the video to [startMs, endMs]. Providing `crop`, `compression`, or any
+ * non-trim option forces a re-encode; pure trims otherwise use lossless
+ * passthrough on iOS.
+ */
 export function trimVideo(uri: string, options: TrimOptions): Promise<TrimResult> {
   if (options.startMs < 0 || options.endMs <= options.startMs) {
     return Promise.reject(

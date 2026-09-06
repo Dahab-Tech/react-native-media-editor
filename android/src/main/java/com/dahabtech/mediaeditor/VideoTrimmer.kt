@@ -13,17 +13,21 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.Crop
 import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.Presentation
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.SingleColorLut
 import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.VideoEncoderSettings
 import expo.modules.kotlin.Promise
 import java.io.InputStream
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 @androidx.annotation.OptIn(UnstableApi::class)
@@ -58,8 +62,10 @@ object VideoTrimmer {
       )
       .build()
 
+    val compression = options.compression
     val editedMediaItem = EditedMediaItem.Builder(mediaItem)
       .apply {
+        // buildEffects always emits a Presentation when compression is set, so this suffices.
         if (effects.isNotEmpty()) {
           setEffects(Effects(emptyList(), effects))
         }
@@ -76,7 +82,20 @@ object VideoTrimmer {
 
     // Transformer must be created and started on the main looper.
     Handler(Looper.getMainLooper()).post {
-      val transformer = Transformer.Builder(context)
+      val builder = Transformer.Builder(context)
+      if (compression != null) {
+        val (outW, outH) = resolveCompressionOutputSize(context, uri, options)
+        val fps = readFrameRate(context, uri)
+        val bitrate = resolveTargetBitrate(outW, outH, fps, compression)
+        builder.setEncoderFactory(
+          DefaultEncoderFactory.Builder(context)
+            .setRequestedVideoEncoderSettings(
+              VideoEncoderSettings.Builder().setBitrate(bitrate).build()
+            )
+            .build()
+        )
+      }
+      val transformer = builder
         .addListener(object : Transformer.Listener {
           override fun onCompleted(composition: Composition, exportResult: ExportResult) {
             promise.resolve(
@@ -105,8 +124,9 @@ object VideoTrimmer {
   }
 
   /**
-   * Effects order: color (matrix+LUT) → speed → crop → overlay. Matches the live preview seam
-   * so overlays land on the color-graded, cropped frame. Empty chain keeps pure trims passthrough.
+   * Effects order: color (matrix+LUT) → speed → crop → maxDimension → overlay. Matches the live
+   * preview seam so overlays land on the color-graded, cropped, resized frame. Empty chain keeps
+   * pure trims passthrough (unless `compression` forces the encoder path in the caller).
    */
   private fun buildEffects(context: Context, uri: String, options: TrimOptions): List<Effect> {
     val out = mutableListOf<Effect>()
@@ -124,10 +144,96 @@ object VideoTrimmer {
     }
 
     options.crop?.let { out.add(buildCropEffect(context, uri, it)) }
+
+    // Presentation must land AFTER Crop so maxDimension caps the CROPPED frame, not the source.
+    // When compression is set but the cap doesn't shrink the frame, we still emit a Presentation
+    // at the resolved (even-clamped) output size — this reliably forces re-encode on Media3.
+    if (options.compression != null) {
+      val (outW, outH) = resolveCompressionOutputSize(context, uri, options)
+      if (outW > 0 && outH > 0) {
+        out.add(
+          Presentation.createForWidthAndHeight(outW, outH, Presentation.LAYOUT_SCALE_TO_FIT)
+        )
+      }
+    }
+
     options.overlayImageUri?.let { overlayUri ->
       buildOverlayEffect(context, overlayUri)?.let { out.add(it) }
     }
     return out
+  }
+
+  /** Post-crop display size in pixels; falls back to full display when no crop is set. */
+  private fun postCropDisplaySize(
+    context: Context,
+    uri: String,
+    options: TrimOptions,
+  ): Pair<Double, Double> {
+    val (displayWidth, displayHeight) = readDisplaySize(context, uri)
+    val crop = options.crop ?: return displayWidth to displayHeight
+    val cropW = crop.width.coerceIn(0.0, displayWidth - crop.x.coerceIn(0.0, displayWidth))
+    val cropH = crop.height.coerceIn(0.0, displayHeight - crop.y.coerceIn(0.0, displayHeight))
+    return cropW to cropH
+  }
+
+  /** Post-crop, post-cap output dimensions, rounded to even integers. Used by both the effects chain and the encoder. */
+  private fun resolveCompressionOutputSize(
+    context: Context,
+    uri: String,
+    options: TrimOptions,
+  ): Pair<Int, Int> {
+    val (postCropW, postCropH) = postCropDisplaySize(context, uri, options)
+    val compression = options.compression
+    if (compression == null || compression.maxDimension <= 0) {
+      return evenClamp(postCropW) to evenClamp(postCropH)
+    }
+    val longEdge = max(postCropW, postCropH)
+    if (longEdge <= compression.maxDimension) {
+      return evenClamp(postCropW) to evenClamp(postCropH)
+    }
+    val scale = compression.maxDimension / longEdge
+    return evenClamp(postCropW * scale) to evenClamp(postCropH * scale)
+  }
+
+  /** Round to an even integer (H.264 encoder requirement) with a 2-pixel floor. */
+  private fun evenClamp(value: Double): Int {
+    val rounded = value.roundToInt()
+    val even = rounded and 1.inv()
+    return max(2, even)
+  }
+
+  /** Resolve target average video bitrate (bits per second) with a 250 kbps floor. */
+  private fun resolveTargetBitrate(
+    width: Int,
+    height: Int,
+    fps: Double,
+    compression: CompressionOptions,
+  ): Int {
+    val floorBps = 250_000
+    if (compression.bitrateMbps > 0) {
+      return max(floorBps, (compression.bitrateMbps * 1_000_000).toInt())
+    }
+    val bpp = when (compression.preset?.lowercase()) {
+      "high" -> 0.15
+      "low" -> 0.04
+      else -> 0.08
+    }
+    val effectiveFps = if (fps > 0) fps else 30.0
+    val bps = width.toDouble() * height.toDouble() * effectiveFps * bpp
+    return max(floorBps, bps.toInt())
+  }
+
+  private fun readFrameRate(context: Context, uri: String): Double {
+    val retriever = MediaMetadataRetriever()
+    try {
+      retriever.setSource(context, uri)
+      val fps = retriever.extractMetadata(
+        MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
+      )?.toDoubleOrNull() ?: 0.0
+      return fps
+    } finally {
+      retriever.release()
+    }
   }
 
   /**

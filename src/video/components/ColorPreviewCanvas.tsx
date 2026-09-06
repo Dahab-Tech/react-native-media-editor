@@ -1,10 +1,12 @@
 import {
   Canvas,
   ColorMatrix,
+  fitbox,
   Group,
   ImageFilter,
   Image as SkiaImage,
   Paint,
+  rect as skRect,
   RuntimeShader,
   useImage,
   useVideo,
@@ -55,8 +57,8 @@ export interface ColorPreviewCanvasProps {
   rect: { x: number; y: number; width: number; height: number };
   /** Playback paused flag. */
   paused: boolean;
-  /** Seek target in seconds, or `null` for continuous play. */
-  seekSeconds: number | null;
+  /** Seek command for the preview decoder; each new object triggers a seek, even to the same position. */
+  seek: { seconds: number } | null;
   /** Full source video dimensions (post-rotation). */
   videoWidth: number;
   videoHeight: number;
@@ -70,8 +72,6 @@ export interface ColorPreviewCanvasProps {
   overlayIntensity: number;
   filterPacks?: readonly PhotoFilterPack[];
   overlayPacks?: readonly PhotoOverlayPack[];
-  /** Playback rate multiplier. Currently informational — Skia's useVideo has no explicit rate control. */
-  speed: number;
 }
 
 /** WYSIWYG color-graded video preview. Applies the same color pipeline as PhotoRender so preview matches export. */
@@ -79,7 +79,7 @@ export function ColorPreviewCanvas({
   source,
   rect,
   paused,
-  seekSeconds,
+  seek,
   videoWidth,
   videoHeight,
   crop,
@@ -90,7 +90,6 @@ export function ColorPreviewCanvas({
   overlayIntensity,
   filterPacks,
   overlayPacks,
-  speed: _speed,
 }: ColorPreviewCanvasProps) {
   // useVideo seeds shared values ONCE via useSharedValue initializers; prop changes must go through useEffect writes.
   const pausedSv = useSharedValue(paused);
@@ -101,10 +100,10 @@ export function ColorPreviewCanvas({
     pausedSv.value = paused;
   }, [paused, pausedSv]);
   useEffect(() => {
-    if (seekSeconds != null) seekSv.value = seekSeconds;
-  }, [seekSeconds, seekSv]);
+    if (seek != null) seekSv.value = seek.seconds;
+  }, [seek, seekSv]);
 
-  const { currentFrame } = useVideo(source, {
+  const { currentFrame, rotation, size } = useVideo(source, {
     paused: pausedSv,
     seek: seekSv,
     looping: loopingSv,
@@ -176,6 +175,18 @@ export function ColorPreviewCanvas({
 
   const layerActive = !matrixIsIdentity || runtimeEffect != null || lutImageFilter != null;
 
+  // useVideo emits unrotated coded frames; fitbox maps them onto the display-oriented fit rect,
+  // applying the container rotation (fill is exact: dst aspect already equals post-rotation aspect).
+  const frameTransform = useMemo(() => {
+    if (size.width <= 0 || size.height <= 0 || fit.width <= 0 || fit.height <= 0) return [];
+    return fitbox(
+      'fill',
+      skRect(0, 0, size.width, size.height),
+      skRect(fit.x - rect.x, fit.y - rect.y, fit.width, fit.height),
+      rotation
+    );
+  }, [size.width, size.height, fit, rect.x, rect.y, rotation]);
+
   return (
     // pointerEvents="none" — canvas is presentational; touches route to layer/draw/crop overlays above.
     <Canvas
@@ -197,14 +208,16 @@ export function ColorPreviewCanvas({
             </Paint>
           ) : undefined
         }>
-        <SkiaImage
-          image={currentFrame}
-          x={fit.x - rect.x}
-          y={fit.y - rect.y}
-          width={fit.width}
-          height={fit.height}
-          fit="contain"
-        />
+        <Group transform={frameTransform}>
+          <SkiaImage
+            image={currentFrame}
+            x={0}
+            y={0}
+            width={size.width}
+            height={size.height}
+            fit="fill"
+          />
+        </Group>
       </Group>
 
       <OverlayLayer

@@ -69,6 +69,7 @@ import {
   INITIAL_STATE,
   usePhotoEditorState,
   type AspectRatio,
+  type NormalizedCrop,
   type PhotoEditorState,
   type PhotoToolId,
 } from './state/photoEditorState';
@@ -952,6 +953,17 @@ function PhotoEditorScreen({
     [dispatch, controller]
   );
 
+  // Crop is a confirm/cancel session: snapshot geometry on entry, restore it if the user
+  // leaves without tapping the tick (switching tools = cancel, like the video editor).
+  const cropSessionRef = useRef<{
+    crop: NormalizedCrop;
+    aspect: AspectRatio;
+    rotation: 0 | 90 | 180 | 270;
+    flipHorizontal: boolean;
+    straighten: number;
+    pastLength: number;
+  } | null>(null);
+
   // Tapping active tab toggles panel visibility (tool stays active so canvas overlays remain on).
   const handleToolSelect = useCallback(
     (tool: PhotoToolId) => {
@@ -959,10 +971,30 @@ function PhotoEditorScreen({
         setPanelHidden((v) => !v);
         return;
       }
+      if (activeTool === 'crop' && cropSessionRef.current != null) {
+        controller.dispatch({ type: 'restoreCropState', ...cropSessionRef.current });
+        cropSessionRef.current = null;
+      }
+      if (tool === 'crop') {
+        const { crop, aspect, rotation, flipHorizontal, straighten, past } = controller.state;
+        cropSessionRef.current = {
+          crop,
+          aspect,
+          rotation,
+          flipHorizontal,
+          straighten,
+          pastLength: past.length,
+        };
+      }
       controller.dispatch({ type: 'setTool', tool });
     },
     [activeTool, controller]
   );
+
+  const handleApplyCrop = useCallback(() => {
+    cropSessionRef.current = null;
+    controller.dispatch({ type: 'setTool', tool: null });
+  }, [controller]);
 
   const handleOpenTextFocus = useCallback(() => {
     const initial: TextDraftFields = {
@@ -1257,6 +1289,7 @@ function PhotoEditorScreen({
               controller={controller}
               imageAspect={image.width() / image.height()}
               allowedAspects={allowedAspects}
+              onApply={handleApplyCrop}
             />
           </ToolPanel>
         </FloatingPanel>

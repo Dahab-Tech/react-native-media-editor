@@ -205,7 +205,9 @@ export function CropOverlay({
     s.onChange({ x: cropX, y: cropY, width: cropW, height: cropH });
   };
 
-  // Single-finger pan: photo follows finger.
+  // Single-finger pan. Fit mode: photo follows finger (frame fixed, crop origin moves opposite).
+  // Anchored mode: the frame IS what moves on screen, so the crop origin follows the finger.
+  const panDirection = mode === 'anchored' ? 1 : -1;
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [panResponder] = useState(() =>
     PanResponder.create({
@@ -232,8 +234,8 @@ export function CropOverlay({
         const dxP = cos * g.dx + sin * g.dy;
         const dyP = -sin * g.dx + cos * g.dy;
         const limits = panLimitsForAngle(o.crop, s.imageAspect, s.straighten);
-        const nextX = clamp(o.crop.x - dxP / o.dispW, limits.minX, limits.maxX);
-        const nextY = clamp(o.crop.y - dyP / o.dispH, limits.minY, limits.maxY);
+        const nextX = clamp(o.crop.x + (panDirection * dxP) / o.dispW, limits.minX, limits.maxX);
+        const nextY = clamp(o.crop.y + (panDirection * dyP) / o.dispH, limits.minY, limits.maxY);
         s.onChange({ x: nextX, y: nextY, width: o.crop.width, height: o.crop.height });
       },
       onPanResponderRelease: () => {

@@ -6,7 +6,10 @@ import type {
   PhotoEditorProps,
   PhotoToolId,
 } from '@dahab-tech/react-native-media-editor/photoEditor';
-import type { VideoEditorProps } from '@dahab-tech/react-native-media-editor/videoEditor';
+import type {
+  VideoCompressionOptions,
+  VideoEditorProps,
+} from '@dahab-tech/react-native-media-editor/videoEditor';
 
 export type Locale = 'en' | 'ar';
 
@@ -31,6 +34,7 @@ export interface PlaygroundConfig {
   aiBackgroundRemoval: boolean;
   photoMultiSelect: boolean;
   minTrimDurationSec: number;
+  videoCompression: boolean;
 }
 
 export const DEFAULT_CONFIG: PlaygroundConfig = {
@@ -44,7 +48,10 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   aiBackgroundRemoval: false,
   photoMultiSelect: false,
   minTrimDurationSec: 1,
+  videoCompression: false,
 };
+
+const MEDIUM_COMPRESSION: VideoCompressionOptions = { preset: 'medium', maxDimension: 1080 };
 
 // Module-scoped so the `backgroundRemoval` prop stays referentially stable across renders.
 export const aiEngine: BackgroundRemovalEngine = createBackgroundRemovalEngine();
@@ -77,6 +84,9 @@ export function photoEditorProps(
 
 export function videoEditorProps(
   config: PlaygroundConfig
-): Pick<VideoEditorProps, 'minDurationMs'> {
-  return { minDurationMs: config.minTrimDurationSec * 1000 };
+): Pick<VideoEditorProps, 'minDurationMs' | 'compression'> {
+  return {
+    minDurationMs: config.minTrimDurationSec * 1000,
+    compression: config.videoCompression ? MEDIUM_COMPRESSION : undefined,
+  };
 }

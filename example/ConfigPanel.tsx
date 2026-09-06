@@ -176,6 +176,19 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
             />
           ))}
         </View>
+
+        <Text style={styles.sectionTitle}>Compression</Text>
+        <View style={styles.chipRow}>
+          <Chip
+            label={config.videoCompression ? 'On (medium, 1080p)' : 'Off'}
+            active={config.videoCompression}
+            onPress={() => set('videoCompression', !config.videoCompression)}
+          />
+        </View>
+        <Text style={styles.hint}>
+          Off = existing behavior (lossless passthrough when possible). On =
+          preset:&apos;medium&apos;, maxDimension:1080 — forces re-encode.
+        </Text>
       </Group>
     </View>
   );

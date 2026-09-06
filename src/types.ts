@@ -19,6 +19,32 @@ export interface CropRect {
   height: number;
 }
 
+/**
+ * Opt-in re-encode target for `trimVideo`. Presence of this field always
+ * forces a re-encode — pure trims that would normally passthrough will
+ * instead be re-encoded at the requested bitrate / dimension cap.
+ */
+export interface VideoCompressionOptions {
+  /**
+   * Quality tier driving the target average video bitrate via a
+   * bits-per-pixel-per-frame heuristic on the OUTPUT dimensions and source fps:
+   * `high` = 0.15, `medium` = 0.08, `low` = 0.04. Default `medium`.
+   * Ignored when `bitrateMbps` is set.
+   */
+  preset?: 'high' | 'medium' | 'low';
+  /**
+   * Cap the output's long edge (post-crop, post-rotation) in display pixels,
+   * preserving aspect ratio. Never upscales. Rounded to even numbers because
+   * H.264 encoders require even dimensions.
+   */
+  maxDimension?: number;
+  /**
+   * Explicit average video bitrate override, in megabits per second.
+   * Takes precedence over `preset` when both are provided.
+   */
+  bitrateMbps?: number;
+}
+
 export interface TrimOptions {
   startMs: number;
   endMs: number;
@@ -34,6 +60,12 @@ export interface TrimOptions {
   lutIntensity?: number;
   /** Playback speed multiplier in [0.5..2.0]. `1.0` = real-time. */
   speedFactor?: number;
+  /**
+   * Opt-in bitrate / dimension compression. Presence forces re-encode
+   * (no lossless passthrough) even for a pure trim. Omit for the existing
+   * byte-for-byte behavior.
+   */
+  compression?: VideoCompressionOptions;
 }
 
 export interface TrimResult {

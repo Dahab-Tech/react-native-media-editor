@@ -10,6 +10,15 @@ class CropRectOptions : Record {
   @Field val height: Double = 0.0
 }
 
+class CompressionOptions : Record {
+  // 'high' | 'medium' | 'low'; drives the bpp-per-frame target when bitrateMbps is absent.
+  @Field val preset: String? = null
+  // Long-edge cap for the post-crop output, preserving aspect. 0 keeps native dims.
+  @Field val maxDimension: Double = 0.0
+  // Explicit average video bitrate override; takes precedence over `preset`.
+  @Field val bitrateMbps: Double = 0.0
+}
+
 class TrimOptions : Record {
   @Field val startMs: Double = 0.0
   @Field val endMs: Double = 0.0
@@ -23,6 +32,8 @@ class TrimOptions : Record {
   @Field val lutIntensity: Double = 1.0
   // Playback speed in [0.5..2.0]; 1.0 skips the time-scaling stage.
   @Field val speedFactor: Double = 1.0
+  // Opt-in re-encode target. Presence forces the encoder path even for pure trims.
+  @Field val compression: CompressionOptions? = null
 }
 
 class ThumbnailOptions : Record {

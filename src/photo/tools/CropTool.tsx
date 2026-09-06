@@ -18,6 +18,8 @@ export interface CropToolProps {
   imageAspect: number;
   /** Consumer-constrained preset list (already normalized). When 'free' is absent, first entry is the reset target. */
   allowedAspects?: readonly AspectRatio[] | null;
+  /** Confirms the crop session and closes the tool. */
+  onApply?: () => void;
 }
 
 const SCRIM_TEXT = '#FFFFFF';
@@ -33,7 +35,7 @@ const ASPECTS: { id: AspectRatio; label?: string }[] = [
   { id: '9:16', label: '9:16' },
 ];
 
-export function CropTool({ controller, imageAspect, allowedAspects }: CropToolProps) {
+export function CropTool({ controller, imageAspect, allowedAspects, onApply }: CropToolProps) {
   const theme = useEditorTheme();
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
@@ -102,6 +104,14 @@ export function CropTool({ controller, imageAspect, allowedAspects }: CropToolPr
           onPress={() => dispatch({ type: 'resetCrop', aspect: resetAspect, imageAspect })}
           muted
         />
+        {onApply != null && (
+          <IconAction
+            icon="check"
+            label={t('done')}
+            onPress={onApply}
+            color={theme.colors.accent}
+          />
+        )}
       </View>
 
       <StraightenDial
@@ -163,13 +173,15 @@ function IconAction({
   label,
   onPress,
   muted,
+  color,
 }: {
   icon: EditorIconName;
   label: string;
   onPress: () => void;
   muted?: boolean;
+  color?: string;
 }) {
-  const color = muted ? SCRIM_TEXT_MUTED : SCRIM_TEXT;
+  const resolvedColor = color ?? (muted ? SCRIM_TEXT_MUTED : SCRIM_TEXT);
   return (
     <Pressable
       onPress={onPress}
@@ -178,7 +190,7 @@ function IconAction({
       // 32×32 visible + hitSlop restores 44pt hit target.
       hitSlop={12}
       style={styles.action}>
-      <EditorIcon name={icon} size={22} color={color} />
+      <EditorIcon name={icon} size={22} color={resolvedColor} />
     </Pressable>
   );
 }

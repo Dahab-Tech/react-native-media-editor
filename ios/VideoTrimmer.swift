@@ -24,9 +24,13 @@ struct VideoTrimmer {
     let speedFactor = options.speedFactor
     let hasSpeedEdit = speedFactor > 0 && abs(speedFactor - 1.0) > 1e-4
     let hasColorEdit = colorMatrix != nil || lutImage != nil
+    let compression = options.compression
 
     // Any non-passthrough edit (crop/overlay/color/speed) forces re-encode; pure trims stay passthrough.
-    let needsComposition = options.crop != nil || overlayImage != nil || hasColorEdit || hasSpeedEdit
+    // Presence of `compression` also forces re-encode via the writer pipeline.
+    let needsComposition =
+      options.crop != nil || overlayImage != nil || hasColorEdit || hasSpeedEdit
+      || compression != nil
 
     // Speed changes require AVMutableComposition for scaleTimeRange.
     let workingAsset: AVAsset
@@ -41,6 +45,33 @@ struct VideoTrimmer {
       workingTimeRange = sourceTimeRange
     }
 
+    // Compression path: AVAssetReader/Writer with a bitrate-controlled H.264 encoder.
+    // The existing composition builder is reused so crop / color / overlay / speed
+    // stay bit-identical to the AVAssetExportSession path.
+    if let compression {
+      let composition = try await makeVideoComposition(
+        asset: workingAsset,
+        crop: options.crop,
+        colorMatrix: colorMatrix,
+        lutImage: lutImage,
+        lutIntensity: lutIntensity,
+        maxDimension: compression.maxDimension > 0 ? compression.maxDimension : nil)
+      if let overlayImage {
+        composition.animationTool = makeAnimationTool(
+          overlayImage: overlayImage, renderSize: composition.renderSize)
+      }
+      let outputURL = try await exportWithCompression(
+        asset: workingAsset,
+        timeRange: workingTimeRange,
+        videoComposition: composition,
+        compression: compression)
+      let outputDurationMs = Int(round(CMTimeGetSeconds(workingTimeRange.duration) * 1000.0))
+      return [
+        "uri": outputURL.absoluteString,
+        "durationMs": outputDurationMs,
+      ]
+    }
+
     let videoComposition: AVMutableVideoComposition?
     let preset: String
     if needsComposition {
@@ -49,7 +80,8 @@ struct VideoTrimmer {
         crop: options.crop,
         colorMatrix: colorMatrix,
         lutImage: lutImage,
-        lutIntensity: lutIntensity)
+        lutIntensity: lutIntensity,
+        maxDimension: nil)
       if let overlayImage {
         composition.animationTool = makeAnimationTool(
           overlayImage: overlayImage, renderSize: composition.renderSize)
@@ -128,12 +160,15 @@ struct VideoTrimmer {
   }
 
   /// Build a video composition sized to crop-or-display; installs `ColorCompositor` when color processing is active.
+  /// Passing `maxDimension` scales renderSize + layer transform so the output's long edge ≤ maxDimension
+  /// (never upscales), rounded to even numbers because H.264 encoders reject odd dims.
   private static func makeVideoComposition(
     asset: AVAsset,
     crop: CropRectOptions?,
     colorMatrix: [Double]?,
     lutImage: CGImage?,
-    lutIntensity: Float
+    lutIntensity: Float,
+    maxDimension: Double?
   ) async throws -> AVMutableVideoComposition {
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       throw MediaEditorError.noVideoTrack
@@ -152,8 +187,8 @@ struct VideoTrimmer {
     let normalizeTransform = preferredTransform.concatenating(
       CGAffineTransform(translationX: -displayRect.minX, y: -displayRect.minY))
 
-    let renderSize: CGSize
-    let layerTransform: CGAffineTransform
+    let baseRenderSize: CGSize
+    let baseLayerTransform: CGAffineTransform
     if let crop {
       let cropX = max(0, min(crop.x, displayWidth))
       let cropY = max(0, min(crop.y, displayHeight))
@@ -162,13 +197,20 @@ struct VideoTrimmer {
       guard cropW > 0, cropH > 0 else {
         throw MediaEditorError.invalidTrimRange
       }
-      renderSize = CGSize(width: cropW, height: cropH)
-      layerTransform = normalizeTransform.concatenating(
+      baseRenderSize = CGSize(width: cropW, height: cropH)
+      baseLayerTransform = normalizeTransform.concatenating(
         CGAffineTransform(translationX: -cropX, y: -cropY))
     } else {
-      renderSize = CGSize(width: displayWidth, height: displayHeight)
-      layerTransform = normalizeTransform
+      baseRenderSize = CGSize(width: displayWidth, height: displayHeight)
+      baseLayerTransform = normalizeTransform
     }
+
+    let scale = maxDimensionScale(size: baseRenderSize, maxLongEdge: maxDimension)
+    let renderSize = evenSize(scaling: baseRenderSize, by: scale)
+    let layerTransform: CGAffineTransform =
+      scale < 1.0
+      ? baseLayerTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+      : baseLayerTransform
 
     let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
     layerInstruction.setTransform(layerTransform, at: .zero)
@@ -239,6 +281,211 @@ struct VideoTrimmer {
   private static func normalizeMatrix(_ raw: [Double]?) -> [Double]? {
     guard let raw, raw.count == 20 else { return nil }
     return raw
+  }
+
+  /// AVAssetReader → AVAssetWriter pipeline for the compression path. Uses the same
+  /// `AVMutableVideoComposition` as the export-session path so crop / color / overlay / speed
+  /// stay bit-identical. Video is H.264 at the resolved bitrate; audio is AAC 128 kbps.
+  private static func exportWithCompression(
+    asset: AVAsset,
+    timeRange: CMTimeRange,
+    videoComposition: AVMutableVideoComposition,
+    compression: CompressionOptions
+  ) async throws -> URL {
+    guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+      throw MediaEditorError.noVideoTrack
+    }
+    let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
+    let fps = nominalFrameRate > 0 ? Double(nominalFrameRate) : 30.0
+
+    let outputURL = try CacheFile.make(prefix: "trim", fileExtension: "mp4")
+
+    let reader: AVAssetReader
+    do {
+      reader = try AVAssetReader(asset: asset)
+    } catch {
+      throw MediaEditorError.exportFailed(error.localizedDescription)
+    }
+    reader.timeRange = timeRange
+
+    let readerVideoOutput = AVAssetReaderVideoCompositionOutput(
+      videoTracks: [videoTrack],
+      videoSettings: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+      ])
+    readerVideoOutput.videoComposition = videoComposition
+    readerVideoOutput.alwaysCopiesSampleData = false
+    guard reader.canAdd(readerVideoOutput) else {
+      throw MediaEditorError.exportFailed("Cannot add video output to reader")
+    }
+    reader.add(readerVideoOutput)
+
+    let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+    let audioTrack = audioTracks.first
+    let readerAudioOutput: AVAssetReaderAudioMixOutput?
+    if let audioTrack {
+      let output = AVAssetReaderAudioMixOutput(
+        audioTracks: [audioTrack],
+        audioSettings: [
+          AVFormatIDKey: kAudioFormatLinearPCM,
+          AVLinearPCMBitDepthKey: 16,
+          AVLinearPCMIsBigEndianKey: false,
+          AVLinearPCMIsFloatKey: false,
+          AVLinearPCMIsNonInterleaved: false,
+        ])
+      output.alwaysCopiesSampleData = false
+      if reader.canAdd(output) {
+        reader.add(output)
+        readerAudioOutput = output
+      } else {
+        readerAudioOutput = nil
+      }
+    } else {
+      readerAudioOutput = nil
+    }
+
+    let writer: AVAssetWriter
+    do {
+      writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+    } catch {
+      throw MediaEditorError.exportFailed(error.localizedDescription)
+    }
+
+    let renderSize = videoComposition.renderSize
+    let targetBitrate = resolveTargetBitrate(
+      renderSize: renderSize, fps: fps, compression: compression)
+    let videoSettings: [String: Any] = [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: Int(renderSize.width),
+      AVVideoHeightKey: Int(renderSize.height),
+      AVVideoCompressionPropertiesKey: [
+        AVVideoAverageBitRateKey: targetBitrate,
+        AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+      ],
+    ]
+    let writerVideoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+    writerVideoInput.expectsMediaDataInRealTime = false
+    // Composition already bakes rotation into the render; identity avoids a double-rotate.
+    writerVideoInput.transform = .identity
+    guard writer.canAdd(writerVideoInput) else {
+      throw MediaEditorError.exportFailed("Cannot add video input to writer")
+    }
+    writer.add(writerVideoInput)
+
+    let writerAudioInput: AVAssetWriterInput?
+    if readerAudioOutput != nil {
+      let audioSettings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: 44100,
+        AVNumberOfChannelsKey: 2,
+        AVEncoderBitRateKey: 128_000,
+      ]
+      let input = AVAssetWriterInput(mediaType: .audio, outputSettings: audioSettings)
+      input.expectsMediaDataInRealTime = false
+      if writer.canAdd(input) {
+        writer.add(input)
+        writerAudioInput = input
+      } else {
+        writerAudioInput = nil
+      }
+    } else {
+      writerAudioInput = nil
+    }
+
+    guard reader.startReading() else {
+      throw MediaEditorError.exportFailed(reader.error?.localizedDescription ?? "reader start failed")
+    }
+    guard writer.startWriting() else {
+      throw MediaEditorError.exportFailed(writer.error?.localizedDescription ?? "writer start failed")
+    }
+    writer.startSession(atSourceTime: .zero)
+
+    let videoQueue = DispatchQueue(label: "com.dahabtech.mediaeditor.compression.video")
+    let audioQueue = DispatchQueue(label: "com.dahabtech.mediaeditor.compression.audio")
+
+    async let videoDone: Void = pump(
+      input: writerVideoInput, output: readerVideoOutput, queue: videoQueue)
+    if let writerAudioInput, let readerAudioOutput {
+      async let audioDone: Void = pump(
+        input: writerAudioInput, output: readerAudioOutput, queue: audioQueue)
+      _ = await (videoDone, audioDone)
+    } else {
+      _ = await videoDone
+    }
+
+    if reader.status == .failed {
+      try? FileManager.default.removeItem(at: outputURL)
+      throw MediaEditorError.exportFailed(reader.error?.localizedDescription ?? "read failed")
+    }
+
+    await withCheckedContinuation { continuation in
+      writer.finishWriting { continuation.resume() }
+    }
+
+    guard writer.status == .completed else {
+      try? FileManager.default.removeItem(at: outputURL)
+      throw MediaEditorError.exportFailed(writer.error?.localizedDescription ?? "write failed")
+    }
+    return outputURL
+  }
+
+  /// Drain a reader output into a writer input, one buffer at a time, honoring `isReadyForMoreMediaData`.
+  private static func pump(
+    input: AVAssetWriterInput,
+    output: AVAssetReaderOutput,
+    queue: DispatchQueue
+  ) async {
+    await withCheckedContinuation { continuation in
+      input.requestMediaDataWhenReady(on: queue) {
+        while input.isReadyForMoreMediaData {
+          if let buffer = output.copyNextSampleBuffer() {
+            if !input.append(buffer) {
+              input.markAsFinished()
+              continuation.resume()
+              return
+            }
+          } else {
+            input.markAsFinished()
+            continuation.resume()
+            return
+          }
+        }
+      }
+    }
+  }
+
+  /// Scale factor to cap `size`'s long edge at `maxLongEdge`. Returns 1.0 for null / non-shrinking inputs.
+  private static func maxDimensionScale(size: CGSize, maxLongEdge: Double?) -> CGFloat {
+    guard let maxLongEdge, maxLongEdge > 0 else { return 1.0 }
+    let longEdge = max(size.width, size.height)
+    guard longEdge > CGFloat(maxLongEdge) else { return 1.0 }
+    return CGFloat(maxLongEdge) / longEdge
+  }
+
+  /// Round `size * scale` to even integers (H.264 encoder requirement); enforce a 2-pixel floor.
+  private static func evenSize(scaling size: CGSize, by scale: CGFloat) -> CGSize {
+    let w = max(2, Int((size.width * scale).rounded()) & ~1)
+    let h = max(2, Int((size.height * scale).rounded()) & ~1)
+    return CGSize(width: w, height: h)
+  }
+
+  /// Resolve target average video bitrate (bits per second) with a floor of 250 kbps.
+  private static func resolveTargetBitrate(
+    renderSize: CGSize, fps: Double, compression: CompressionOptions
+  ) -> Int {
+    let floorBps = 250_000
+    if compression.bitrateMbps > 0 {
+      return max(floorBps, Int(compression.bitrateMbps * 1_000_000))
+    }
+    let bpp: Double
+    switch (compression.preset ?? "medium").lowercased() {
+    case "high": bpp = 0.15
+    case "low": bpp = 0.04
+    default: bpp = 0.08
+    }
+    let effectiveFps = fps > 0 ? fps : 30.0
+    let bps = Double(renderSize.width) * Double(renderSize.height) * effectiveFps * bpp
+    return max(floorBps, Int(bps))
   }
 }
 

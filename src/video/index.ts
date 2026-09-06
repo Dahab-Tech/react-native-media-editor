@@ -15,5 +15,6 @@ export type {
   ThumbnailResult,
   TrimOptions,
   TrimResult,
+  VideoCompressionOptions,
   VideoInfo,
 } from '../types';

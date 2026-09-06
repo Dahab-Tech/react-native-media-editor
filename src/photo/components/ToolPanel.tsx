@@ -22,7 +22,8 @@ export interface ToolPanelProps {
 
 const GRABBER_WIDTH = 36;
 const GRABBER_HEIGHT = 4;
-const GRABBER_HIT_HEIGHT = 28;
+/** Also the collapsed strip's height — exported so hosts can clear the strip when it floats over content. */
+export const GRABBER_HIT_HEIGHT = 28;
 const DISMISS_TRAVEL_FRACTION = 1 / 3;
 const DISMISS_FLICK_VELOCITY = 700;
 const SPRING_BACK_MS = 180;

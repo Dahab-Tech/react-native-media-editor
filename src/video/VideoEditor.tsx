@@ -1,7 +1,7 @@
 import { Canvas, drawAsImage, ImageFormat, useImage } from '@shopify/react-native-skia';
 import { useEvent } from 'expo';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
@@ -40,7 +40,7 @@ import {
   type PhotoFilterPack,
 } from '../photo/color';
 import { LayerOverlay } from '../photo/components/LayerOverlay';
-import { CollapsedPanelStrip, ToolPanel } from '../photo/components/ToolPanel';
+import { CollapsedPanelStrip, GRABBER_HIT_HEIGHT, ToolPanel } from '../photo/components/ToolPanel';
 import { DrawOverlay, type DrawStroke } from '../photo/draw';
 import {
   generateLayerId,
@@ -66,7 +66,13 @@ import {
 } from '../photo/tools/TextFocusEditor';
 import { TextTool } from '../photo/tools/TextTool';
 import { useResolvedStickerImages } from '../photo/tools/useResolvedStickerImages';
-import type { CropRect, ThumbnailResult, TrimResult, VideoInfo } from '../types';
+import type {
+  CropRect,
+  ThumbnailResult,
+  TrimResult,
+  VideoCompressionOptions,
+  VideoInfo,
+} from '../types';
 import { getVideoInfo, getVideoThumbnail, trimVideo } from './api';
 import { CoverPicker } from './components/CoverPicker';
 import { CropAspectPicker } from './components/CropAspectPicker';
@@ -101,7 +107,10 @@ export interface VideoEditorProps extends MediaEditorConfigProps {
   onCancel?: () => void;
   /** Called with the trimmed file once export succeeds. */
   onExport?: (result: TrimResult) => void;
-  /** Called after a cover frame is captured at the current playback position. */
+  /**
+   * Called after a cover frame is captured at the current playback position.
+   * If no cover was picked by the time export succeeds, fires with the exported video's first frame.
+   */
   onCoverSelected?: (result: ThumbnailResult) => void;
   onError?: (error: Error) => void;
   /** Smallest selectable trim range. Defaults to 1000 ms. */
@@ -120,6 +129,12 @@ export interface VideoEditorProps extends MediaEditorConfigProps {
   filterPacks?: readonly PhotoFilterPack[];
   /** Overlay packs appended after built-ins. */
   overlayPacks?: readonly PhotoOverlayPack[];
+  /**
+   * Opt-in bitrate / dimension cap applied at export time. Presence forces
+   * a re-encode even for pure trims. No UI is rendered for this — it is a
+   * consumer-config prop passed through to `trimVideo`.
+   */
+  compression?: VideoCompressionOptions;
 }
 
 export function VideoEditor({
@@ -165,6 +180,7 @@ function VideoEditorScreen({
   cropAspectRatios,
   filterPacks,
   overlayPacks,
+  compression,
 }: VideoEditorScreenProps) {
   const theme = useEditorTheme();
   const { t, isRTL } = useEditorI18n();
@@ -175,6 +191,8 @@ function VideoEditorScreen({
   // Ephemeral crop-mode UI kept out of the reducer so undo/redo never reopens crop.
   const [cropActive, setCropActive] = useState(false);
   const [pendingCrop, setPendingCrop] = useState<CropRect | null>(null);
+  // Draft trim range; committed to the reducer only on the tick, discarded on the x.
+  const [pendingRange, setPendingRange] = useState<{ startMs: number; endMs: number } | null>(null);
 
   const [videoContainer, setVideoContainer] = useState({ width: 0, height: 0 });
   const [toolbarHeight, setToolbarHeight] = useState(0);
@@ -200,6 +218,28 @@ function VideoEditorScreen({
     // eslint-disable-next-line react-hooks/immutability -- expo-video's player exposes playbackRate as a mutable property; assignment is the intended API.
     player.playbackRate = state.speed;
   }, [player, state.speed]);
+
+  // Re-seek command for the Skia color preview, whose decoder free-runs otherwise.
+  const [syncSeek, setSyncSeek] = useState<{ seconds: number } | null>(null);
+
+  // Loop preview inside the (draft or committed) trim range — native loop=true only wraps the full file.
+  const loopRange = pendingRange ?? state.range;
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability -- expo-video's documented way to enable timeUpdate events.
+    player.timeUpdateEventInterval = 0.25;
+    const startS = loopRange.startMs / 1000;
+    const endS = loopRange.endMs / 1000;
+    const subscription = player.addListener('timeUpdate', ({ currentTime }) => {
+      if (!player.playing || endS <= startS) return;
+      // Below start happens when the native full-file loop wraps to 0.
+      if (currentTime >= endS || currentTime < startS - 0.25) {
+        player.currentTime = startS;
+        // Keep the Skia preview decoder in lockstep across the loop jump.
+        setSyncSeek({ seconds: startS });
+      }
+    });
+    return () => subscription.remove();
+  }, [player, loopRange.startMs, loopRange.endMs]);
 
   const reportError = useCallback(
     (error: unknown) => {
@@ -372,11 +412,14 @@ function VideoEditorScreen({
     setPanelHidden(false);
   }
 
+  const coverPickedRef = useRef(false);
+
   const handleSaveCover = useCallback(
     async (timeMs: number) => {
       setBusy(true);
       try {
         const result = await getVideoThumbnail(source, { timeMs });
+        coverPickedRef.current = true;
         onCoverSelected?.(result);
         dispatch({ type: 'setTool', tool: null });
       } catch (error) {
@@ -390,6 +433,10 @@ function VideoEditorScreen({
 
   // Scrub target in SECONDS; the Skia ColorPreviewCanvas seeks its decoder to this value in lockstep.
   const [scrubSeconds, setScrubSeconds] = useState<number | null>(null);
+  const scrubSeek = useMemo(
+    () => (scrubSeconds != null ? { seconds: scrubSeconds } : null),
+    [scrubSeconds]
+  );
 
   const handleScrub = useCallback(
     (timeMs: number) => {
@@ -409,6 +456,18 @@ function VideoEditorScreen({
   const closeCoverPicker = useCallback(() => {
     dispatch({ type: 'setTool', tool: null });
   }, [dispatch]);
+
+  const applyTrim = useCallback(() => {
+    if (!pendingRange) return;
+    // One committed trim = one undo step.
+    dispatch({ type: 'checkpoint' });
+    dispatch({ type: 'setRange', startMs: pendingRange.startMs, endMs: pendingRange.endMs });
+    setPendingRange(null);
+  }, [dispatch, pendingRange]);
+
+  const cancelTrim = useCallback(() => {
+    setPendingRange(null);
+  }, []);
 
   const enterCrop = useCallback(() => {
     setPendingCrop(state.crop);
@@ -553,16 +612,27 @@ function VideoEditorScreen({
 
       const speedFactor = state.speed !== VIDEO_SPEED_DEFAULT ? state.speed : undefined;
 
+      // WYSIWYG: an unconfirmed draft is what the trim bar shows, so export honors it.
+      const range = pendingRange ?? state.range;
       const result = await trimVideo(source, {
-        startMs: state.range.startMs,
-        endMs: state.range.endMs,
+        startMs: range.startMs,
+        endMs: range.endMs,
         crop: state.crop ?? undefined,
         overlayImageUri,
         colorMatrix: includeMatrix ? matrixNumbers : undefined,
         lutImageUri,
         lutIntensity,
         speedFactor,
+        compression,
       });
+      if (onCoverSelected && !coverPickedRef.current) {
+        // Default cover: first frame of the exported file, so it reflects trim/crop/color edits.
+        try {
+          onCoverSelected(await getVideoThumbnail(result.uri, { timeMs: 0 }));
+        } catch {
+          // Best-effort — a missing default cover must not fail the export.
+        }
+      }
       onExport?.(result);
     } catch (error) {
       reportError(error);
@@ -572,8 +642,8 @@ function VideoEditorScreen({
   }, [
     info,
     source,
-    state.range.startMs,
-    state.range.endMs,
+    pendingRange,
+    state.range,
     state.crop,
     state.filterId,
     state.filterIntensity,
@@ -581,8 +651,10 @@ function VideoEditorScreen({
     state.speed,
     filterPacks,
     onExport,
+    onCoverSelected,
     reportError,
     rasterizeOverlay,
+    compression,
   ]);
 
   const togglePlayback = useCallback(() => {
@@ -595,6 +667,8 @@ function VideoEditorScreen({
   const panelBottom = toolbarHeight + insets.bottom;
   const panelVisible = activeTool != null && !panelHidden && !cropActive && textFocus == null;
   const highlightedTool: VideoToolId | null = cropActive ? 'crop' : activeTool;
+  // Other tools bring their own panel over this slot, so the trim bar yields (crop swaps in its own chrome row).
+  const trimBarVisible = activeTool == null || activeTool === 'trim';
 
   const colorPipelineActive =
     state.filterId !== ORIGINAL_FILTER_ID ||
@@ -602,8 +676,18 @@ function VideoEditorScreen({
     state.overlayId != null;
   const colorPreviewMounted = info != null && videoDisplayRect.width > 0;
   const nativeVideoHidden = false;
+  // On pause, snap the Skia decoder to the player position so the frozen graded frame matches the audio/native frame.
+  useEffect(() => {
+    const subscription = player.addListener('playingChange', ({ isPlaying: playing }) => {
+      if (!playing) setSyncSeek({ seconds: player.currentTime });
+    });
+    return () => subscription.remove();
+  }, [player]);
+
   // Two-surface design: native VideoView is the always-visible base; Skia fades in on top only when the color pipeline is active and not scrubbing, because the Skia decoder can't reliably re-seek.
-  const skiaOpacityTarget = colorPipelineActive && scrubSeconds == null ? 1 : 0;
+  // Skia's decoder has no rate control, so during speeded playback the native surface shows instead.
+  const skiaOpacityTarget =
+    colorPipelineActive && scrubSeconds == null && (state.speed === 1 || !isPlaying) ? 1 : 0;
   const skiaOpacity = useSharedValue(skiaOpacityTarget);
   useEffect(() => {
     skiaOpacity.value = withTiming(skiaOpacityTarget, { duration: 250 });
@@ -651,7 +735,7 @@ function VideoEditorScreen({
               source={source}
               rect={videoDisplayRect}
               paused={!isPlaying}
-              seekSeconds={scrubSeconds}
+              seek={scrubSeek ?? syncSeek}
               // Raw source dims; crop clipping handled internally via the `crop` prop.
               videoWidth={info.width}
               videoHeight={info.height}
@@ -663,7 +747,6 @@ function VideoEditorScreen({
               overlayIntensity={state.overlayIntensity}
               filterPacks={filterPacks}
               overlayPacks={overlayPacks}
-              speed={state.speed}
             />
           </Animated.View>
         )}
@@ -739,7 +822,13 @@ function VideoEditorScreen({
           />
         )}
         {!cropActive && activeTool !== 'draw' && (
-          <View pointerEvents="box-none" style={styles.playbackOverlay}>
+          <View
+            pointerEvents="box-none"
+            style={[
+              styles.playbackOverlay,
+              // With the trim bar yielded the container reaches the toolbar, so clear the floating grabber strip.
+              !trimBarVisible && { bottom: 16 + insets.bottom + GRABBER_HIT_HEIGHT },
+            ]}>
             <Pressable
               onPress={togglePlayback}
               accessibilityRole="button"
@@ -756,6 +845,35 @@ function VideoEditorScreen({
               {/* On dark scrim, pin to white. */}
               <EditorIcon name={isPlaying ? 'pause' : 'play'} size={26} color="#FFFFFF" />
             </Pressable>
+          </View>
+        )}
+        {!cropActive && trimBarVisible && pendingRange != null && (
+          <View
+            style={[
+              styles.trimConfirmRow,
+              isRTL ? { left: theme.spacing.md } : { right: theme.spacing.md },
+              {
+                bottom: theme.spacing.sm,
+                flexDirection: isRTL ? 'row-reverse' : 'row',
+                gap: theme.spacing.xs,
+                backgroundColor: theme.colors.overlay,
+                borderRadius: 999,
+                padding: theme.spacing.xs,
+              },
+            ]}>
+            <CompactIconAction
+              iconName="close"
+              label={t('cancel')}
+              onPress={cancelTrim}
+              disabled={busy}
+            />
+            <CompactIconAction
+              iconName="check"
+              label={t('apply')}
+              onPress={applyTrim}
+              emphasized
+              disabled={busy}
+            />
           </View>
         )}
       </View>
@@ -801,24 +919,22 @@ function VideoEditorScreen({
             />
           </View>
         </View>
-      ) : info ? (
-        <TrimBar
-          source={source}
-          durationMs={info.durationMs}
-          startMs={state.range.startMs}
-          endMs={state.range.endMs}
-          minDurationMs={minDurationMs}
-          onChange={(startMs, endMs) => {
-            dispatch({ type: 'setRange', startMs, endMs });
-          }}
-          onScrub={handleScrub}
-          onScrubEnd={handleScrubEnd}
-        />
-      ) : (
+      ) : !info ? (
         <View style={[styles.loading, { padding: theme.spacing.md }]}>
           <ActivityIndicator color={theme.colors.accent} />
         </View>
-      )}
+      ) : trimBarVisible ? (
+        <TrimBar
+          source={source}
+          durationMs={info.durationMs}
+          startMs={pendingRange?.startMs ?? state.range.startMs}
+          endMs={pendingRange?.endMs ?? state.range.endMs}
+          minDurationMs={minDurationMs}
+          onChange={(startMs, endMs) => setPendingRange({ startMs, endMs })}
+          onScrub={handleScrub}
+          onScrubEnd={handleScrubEnd}
+        />
+      ) : null}
       <View
         style={textFocus != null ? styles.chromeHidden : null}
         pointerEvents={textFocus != null ? 'none' : 'auto'}
@@ -1120,6 +1236,10 @@ const styles = StyleSheet.create({
     minWidth: 0, // let the scroll view clip inside its flex bounds
   },
   cropInlineActions: {
+    alignItems: 'center',
+  },
+  trimConfirmRow: {
+    position: 'absolute',
     alignItems: 'center',
   },
   compactIconAction: {

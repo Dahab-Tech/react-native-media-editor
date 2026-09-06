@@ -7,6 +7,15 @@ struct CropRectOptions: Record {
   @Field var height: Double = 0
 }
 
+struct CompressionOptions: Record {
+  // 'high' | 'medium' | 'low'; drives the bits-per-pixel-per-frame target when bitrateMbps is absent.
+  @Field var preset: String? = nil
+  // Long-edge cap for the post-crop output, preserving aspect. 0 keeps native dims.
+  @Field var maxDimension: Double = 0
+  // Explicit average video bitrate override; takes precedence over `preset`.
+  @Field var bitrateMbps: Double = 0
+}
+
 struct TrimOptions: Record {
   @Field var startMs: Double = 0
   @Field var endMs: Double = 0
@@ -20,6 +29,8 @@ struct TrimOptions: Record {
   @Field var lutIntensity: Double = 1.0
   // Playback speed in [0.5..2.0]; 1.0 skips the time-scaling stage.
   @Field var speedFactor: Double = 1.0
+  // Opt-in re-encode target. Presence forces the writer path even for pure trims.
+  @Field var compression: CompressionOptions? = nil
 }
 
 struct ThumbnailOptions: Record {

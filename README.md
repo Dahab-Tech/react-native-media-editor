@@ -4,7 +4,7 @@ The **React Native photo & video editor SDK** for Expo — customizable, RTL-fir
 
 → Full docs & demo at [dahab-tech.com/apps/media-editor](https://dahab-tech.com/apps/media-editor)
 
-- **Video**: lossless trim (passthrough export), crop, cover/thumbnail selection, video metadata — powered by AVFoundation (iOS) and Media3 Transformer (Android). No FFmpeg.
+- **Video**: lossless trim (passthrough export), crop, opt-in bitrate/dimension compression, cover/thumbnail selection, video metadata — powered by AVFoundation (iOS) and Media3 Transformer (Android). No FFmpeg.
 - **Photo**: Skia-based editor with crop/rotate/flip, brightness/contrast/saturation adjustments, filter presets, text overlays, and full-resolution JPEG export.
 - **RTL & i18n**: English and Arabic built in, custom strings supported, per-editor direction control (no global `I18nManager` reliance).
 - **Theming**: dark theme by default, fully overridable colors/spacing/radius.
@@ -27,11 +27,13 @@ npx expo run:ios   # or run:android
 
 Only install what you use:
 
-| Feature | Extra dependency |
+| Feature | Extra dependencies |
 | --- | --- |
-| `PhotoEditor` component | `npx expo install @shopify/react-native-skia react-native-safe-area-context` |
-| `VideoEditor` component | `npx expo install expo-video react-native-safe-area-context` |
+| `PhotoEditor` component | `npx expo install @shopify/react-native-skia react-native-reanimated react-native-gesture-handler react-native-safe-area-context` |
+| `VideoEditor` component | `npx expo install expo-video react-native-reanimated react-native-gesture-handler react-native-safe-area-context` |
 | Functional video API (`trimVideo`, `getVideoThumbnail`, `getVideoInfo`) | none |
+
+The default Expo (expo-router) template already includes `react-native-reanimated`, `react-native-gesture-handler`, and `react-native-safe-area-context` — in that case only `@shopify/react-native-skia` and/or `expo-video` are new. If Metro fails with `Unable to resolve module <package>`, that peer is missing: run the matching install line above and rebuild your development build.
 
 ## Usage
 
@@ -44,6 +46,7 @@ import { VideoEditor } from '@dahab-tech/react-native-media-editor/videoEditor';
   source={videoUri}
   onCancel={() => {}}
   onExport={(result) => console.log(result.uri, result.durationMs)}
+  // Fires when the user picks a cover; defaults to the exported video's first frame otherwise.
   onCoverSelected={(cover) => console.log(cover.uri)}
   onError={(error) => console.warn(error)}
 />
@@ -69,6 +72,15 @@ const cropped = await trimVideo(videoUri, {
   endMs: 6000,
   crop: { x: 100, y: 50, width: 640, height: 360 }, // display-space pixels; forces re-encode
 });
+
+const compressed = await trimVideo(videoUri, {
+  startMs: 0,
+  endMs: 30_000,
+  compression: { preset: 'medium', maxDimension: 1080 }, // presence forces re-encode
+});
+// `compression.preset` = 'high' | 'medium' | 'low' (bpp/frame heuristic on OUTPUT dims)
+// `compression.maxDimension` caps the long edge post-crop; never upscales
+// `compression.bitrateMbps` overrides `preset` when you need an exact target
 
 const cover = await getVideoThumbnail(videoUri, {
   timeMs: 2500,

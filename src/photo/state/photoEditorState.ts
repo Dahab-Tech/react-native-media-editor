@@ -122,6 +122,17 @@ export type PhotoEditorAction =
   | { type: 'setStraighten'; value: number; imageAspect: number }
   // Reset crop / rotation / flip / straighten. With aspect+imageAspect, refits to the constraint.
   | { type: 'resetCrop'; aspect?: AspectRatio; imageAspect?: number }
+  // Cancel path for crop mode: restore geometry fields to a pre-entry snapshot, no history entry.
+  // `pastLength` truncates checkpoints pushed during the session so undo can't resurrect drafts.
+  | {
+      type: 'restoreCropState';
+      crop: NormalizedCrop;
+      aspect: AspectRatio;
+      rotation: 0 | 90 | 180 | 270;
+      flipHorizontal: boolean;
+      straighten: number;
+      pastLength?: number;
+    }
   | { type: 'setAdjustment'; key: PhotoAdjustmentKey; value: number }
   | { type: 'resetAdjustments' }
   | { type: 'setFilter'; id: PhotoFilterId }
@@ -207,6 +218,19 @@ function applyAction(state: PhotoEditorState, action: PhotoEditorAction): PhotoE
   switch (action.type) {
     case 'setTool':
       return { ...state, activeTool: action.tool };
+    case 'restoreCropState':
+      return {
+        ...state,
+        past:
+          action.pastLength != null && action.pastLength < state.past.length
+            ? state.past.slice(0, action.pastLength)
+            : state.past,
+        crop: action.crop,
+        aspect: action.aspect,
+        rotation: action.rotation,
+        flipHorizontal: action.flipHorizontal,
+        straighten: action.straighten,
+      };
     case 'setCrop': {
       // fitCropForAngle is translate-first (only shrink when the bbox can't fit at any position);
       // setStraighten uses clampCropForAngle (shrink-about-center) to preserve the user's chosen center.
