@@ -5,7 +5,7 @@ import {
 import { useState, type ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import type { PlaygroundConfig, TitleMode, ToolsPreset } from './editorConfig';
+import type { CompressionSetting, PlaygroundConfig, TitleMode, ToolsPreset } from './editorConfig';
 
 interface ConfigPanelProps {
   config: PlaygroundConfig;
@@ -25,6 +25,16 @@ const MIN_TRIM_SECONDS = [1, 3, 5] as const;
 const TOOLS_PRESET_OPTIONS: readonly { value: ToolsPreset; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'minimal', label: 'Minimal' },
+];
+
+const PHOTO_QUALITIES = [100, 90, 70, 50] as const;
+
+const COMPRESSION_OPTIONS: readonly { value: CompressionSetting; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+  { value: 'custom', label: 'Custom' },
 ];
 
 export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
@@ -123,6 +133,21 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
           ))}
         </View>
 
+        <Text style={styles.sectionTitle}>Export quality</Text>
+        <View style={styles.chipRow}>
+          {PHOTO_QUALITIES.map((value) => (
+            <Chip
+              key={value}
+              label={value === 90 ? '90 (default)' : String(value)}
+              active={config.photoExportQuality === value}
+              onPress={() => set('photoExportQuality', value)}
+            />
+          ))}
+        </View>
+        <Text style={styles.hint}>
+          JPEG encode quality, applied during export. Ignored for PNG.
+        </Text>
+
         <Text style={styles.sectionTitle}>AI background removal</Text>
         <View style={styles.chipRow}>
           <Chip
@@ -179,15 +204,29 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
 
         <Text style={styles.sectionTitle}>Compression</Text>
         <View style={styles.chipRow}>
-          <Chip
-            label={config.videoCompression ? 'On (medium, 1080p)' : 'Off'}
-            active={config.videoCompression}
-            onPress={() => set('videoCompression', !config.videoCompression)}
-          />
+          {COMPRESSION_OPTIONS.map(({ value, label }) => (
+            <Chip
+              key={value}
+              label={label}
+              active={config.videoCompression === value}
+              onPress={() => set('videoCompression', value)}
+            />
+          ))}
         </View>
+        {config.videoCompression === 'custom' && (
+          <TextInput
+            style={styles.input}
+            value={config.customBitrateMbps}
+            onChangeText={(text) => set('customBitrateMbps', text)}
+            keyboardType="decimal-pad"
+            placeholder="Bitrate in Mbps, e.g. 10"
+            placeholderTextColor="#5A5A63"
+          />
+        )}
         <Text style={styles.hint}>
-          Off = existing behavior (lossless passthrough when possible). On =
-          preset:&apos;medium&apos;, maxDimension:1080 — forces re-encode.
+          Off = existing behavior (lossless passthrough when possible). High/Medium/Low = quality
+          preset + maxDimension:1080. Custom = exact bitrateMbps you type (Mbps), no dimension cap.
+          Any setting forces re-encode.
         </Text>
       </Group>
     </View>

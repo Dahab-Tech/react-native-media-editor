@@ -1,3 +1,4 @@
+import { getVideoInfo } from '@dahab-tech/react-native-media-editor';
 import {
   PhotoEditor,
   type PhotoExportResult,
@@ -8,8 +9,19 @@ import {
   type TrimResult,
 } from '@dahab-tech/react-native-media-editor/videoEditor';
 import * as ImagePicker from 'expo-image-picker';
-import { useState } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
+import { useEffect, useState } from 'react';
+import {
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { ConfigPanel } from './ConfigPanel';
@@ -112,62 +124,125 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={styles.titleRow}>
-            <Text style={styles.title}>@dahab-tech/react-native-media-editor</Text>
-            <Pressable
-              style={styles.localeToggle}
-              onPress={() => setConfig({ ...config, locale: config.locale === 'en' ? 'ar' : 'en' })}
-              accessibilityRole="button"
-              accessibilityLabel={`Locale: ${config.locale === 'en' ? 'English' : 'Arabic'}. Tap to switch.`}>
-              <Text
-                style={[
-                  styles.localeSegment,
-                  config.locale === 'en' && styles.localeSegmentActive,
-                ]}>
-                EN
-              </Text>
-              <Text
-                style={[
-                  styles.localeSegment,
-                  config.locale === 'ar' && styles.localeSegmentActive,
-                ]}>
-                عربي
-              </Text>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled">
+            <View style={styles.titleRow}>
+              <Text style={styles.title}>@dahab-tech/react-native-media-editor</Text>
+              <Pressable
+                style={styles.localeToggle}
+                onPress={() =>
+                  setConfig({ ...config, locale: config.locale === 'en' ? 'ar' : 'en' })
+                }
+                accessibilityRole="button"
+                accessibilityLabel={`Locale: ${config.locale === 'en' ? 'English' : 'Arabic'}. Tap to switch.`}>
+                <Text
+                  style={[
+                    styles.localeSegment,
+                    config.locale === 'en' && styles.localeSegmentActive,
+                  ]}>
+                  EN
+                </Text>
+                <Text
+                  style={[
+                    styles.localeSegment,
+                    config.locale === 'ar' && styles.localeSegmentActive,
+                  ]}>
+                  عربي
+                </Text>
+              </Pressable>
+            </View>
+
+            <ConfigPanel config={config} onChange={setConfig} />
+
+            {trimResult && <TrimResultPanel key={trimResult.uri} result={trimResult} />}
+
+            {cover && (
+              <View style={styles.result}>
+                <Text style={styles.resultTitle}>Selected cover</Text>
+                <Image
+                  source={{ uri: cover.uri }}
+                  style={[styles.mediaPreview, { aspectRatio: cover.width / cover.height }]}
+                  resizeMode="contain"
+                />
+              </View>
+            )}
+
+            {photo && <PhotoResultPanel result={photo} />}
+          </ScrollView>
+
+          <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
+            <Pressable style={styles.button} onPress={() => pickMedia('video')}>
+              <Text style={styles.buttonText}>Open Video Editor</Text>
             </Pressable>
-          </View>
-
-          <ConfigPanel config={config} onChange={setConfig} />
-
-          {trimResult && (
-            <View style={styles.result}>
-              <Text style={styles.resultTitle}>Trimmed video</Text>
-              <Text style={styles.resultText}>
-                {Math.round(trimResult.durationMs / 1000)}s — {trimResult.uri}
-              </Text>
-            </View>
-          )}
-
-          {cover && (
-            <View style={styles.result}>
-              <Text style={styles.resultTitle}>Selected cover</Text>
-              <Image source={{ uri: cover.uri }} style={styles.preview} resizeMode="cover" />
-            </View>
-          )}
-
-          {photo && <PhotoResultPanel result={photo} />}
-        </ScrollView>
-
-        <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
-          <Pressable style={styles.button} onPress={() => pickMedia('video')}>
-            <Text style={styles.buttonText}>Open Video Editor</Text>
-          </Pressable>
-          <Pressable style={styles.button} onPress={() => pickMedia('photo')}>
-            <Text style={styles.buttonText}>Open Photo Editor</Text>
-          </Pressable>
-        </SafeAreaView>
+            <Pressable style={styles.button} onPress={() => pickMedia('photo')}>
+              <Text style={styles.buttonText}>Open Photo Editor</Text>
+            </Pressable>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </SafeAreaProvider>
+  );
+}
+
+const formatBytes = (bytes: number): string =>
+  bytes >= 1024 * 1024
+    ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    : `${Math.round(bytes / 1024)} KB`;
+
+// blob.size avoids an expo-file-system dependency just for stat.
+async function fileSizeBytes(uri: string): Promise<number> {
+  const response = await fetch(uri);
+  const blob = await response.blob();
+  return blob.size;
+}
+
+function useFileSize(uri: string): string | null {
+  const [size, setSize] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fileSizeBytes(uri)
+      .then((bytes) => {
+        if (!cancelled) setSize(formatBytes(bytes));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+  return size;
+}
+
+function TrimResultPanel({ result }: { result: TrimResult }) {
+  const player = useVideoPlayer(result.uri, (p) => {
+    p.loop = true;
+  });
+  const size = useFileSize(result.uri);
+  const [resolution, setResolution] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    getVideoInfo(result.uri)
+      .then((info) => {
+        if (!cancelled) setResolution(`${info.width}×${info.height}`);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [result.uri]);
+
+  const details = [`${Math.round(result.durationMs / 1000)}s`, resolution, size]
+    .filter(Boolean)
+    .join(' • ');
+  return (
+    <View style={styles.result}>
+      <Text style={styles.resultTitle}>Trimmed video</Text>
+      <Text style={styles.resultText}>{details}</Text>
+      <VideoView player={player} style={styles.videoPreview} contentFit="contain" nativeControls />
+    </View>
   );
 }
 
@@ -202,13 +277,18 @@ function PhotoResultPanel({
       <Text style={styles.resultTitle}>
         Exported photo ({one.format}, {one.width}×{one.height})
       </Text>
-      <Image source={{ uri: one.uri }} style={styles.preview} resizeMode="cover" />
+      <Image
+        source={{ uri: one.uri }}
+        style={[styles.mediaPreview, { aspectRatio: one.width / one.height }]}
+        resizeMode="contain"
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0E0E11' },
+  flex: { flex: 1 },
   scrollContent: { padding: 20, gap: 12 },
   titleRow: {
     flexDirection: 'row',
@@ -253,7 +333,8 @@ const styles = StyleSheet.create({
   result: { backgroundColor: '#1B1B20', borderRadius: 10, padding: 12, gap: 8 },
   resultTitle: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
   resultText: { color: '#9A9AA3', fontSize: 12 },
-  preview: { width: '100%', height: 160, borderRadius: 6 },
+  mediaPreview: { width: '100%', borderRadius: 6, backgroundColor: '#000000' },
+  videoPreview: { width: '100%', height: 320, borderRadius: 6, backgroundColor: '#000000' },
   thumbStrip: { gap: 8 },
   thumb: { width: 72, height: 72, borderRadius: 6 },
 });

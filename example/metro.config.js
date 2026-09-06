@@ -12,11 +12,33 @@ config.resolver.blockList = [
   // On windows the path will resolve with `\`. We need to escape it with `\\` for the RegExp.
   new RegExp(path.resolve('..', 'node_modules', 'react').replace(/\\/g, '\\\\')),
   new RegExp(path.resolve('..', 'node_modules', 'react-native').replace(/\\/g, '\\\\')),
+  // Native singletons must resolve to a single copy (the example's). The root
+  // repo has its own devDependency copies; bundling both registers duplicate
+  // native views ("Tried to register two views with the same name").
+  new RegExp(path.resolve('..', 'node_modules', 'expo-video').replace(/\\/g, '\\\\')),
+  new RegExp(path.resolve('..', 'node_modules', 'react-native-reanimated').replace(/\\/g, '\\\\')),
+  new RegExp(
+    path.resolve('..', 'node_modules', 'react-native-gesture-handler').replace(/\\/g, '\\\\')
+  ),
+  new RegExp(
+    path.resolve('..', 'node_modules', 'react-native-safe-area-context').replace(/\\/g, '\\\\')
+  ),
+  new RegExp(
+    path.resolve('..', 'node_modules', '@shopify', 'react-native-skia').replace(/\\/g, '\\\\')
+  ),
   // Same dedupe for the linked AI add-on package: its devDependency copies of
   // react/react-native/expo must never be bundled alongside the example's.
-  new RegExp(path.resolve(__dirname, '../../media-editor-ai', 'node_modules', 'react').replace(/\\/g, '\\\\')),
-  new RegExp(path.resolve(__dirname, '../../media-editor-ai', 'node_modules', 'react-native').replace(/\\/g, '\\\\')),
-  new RegExp(path.resolve(__dirname, '../../media-editor-ai', 'node_modules', 'expo').replace(/\\/g, '\\\\')),
+  new RegExp(
+    path.resolve(__dirname, '../../media-editor-ai', 'node_modules', 'react').replace(/\\/g, '\\\\')
+  ),
+  new RegExp(
+    path
+      .resolve(__dirname, '../../media-editor-ai', 'node_modules', 'react-native')
+      .replace(/\\/g, '\\\\')
+  ),
+  new RegExp(
+    path.resolve(__dirname, '../../media-editor-ai', 'node_modules', 'expo').replace(/\\/g, '\\\\')
+  ),
 ];
 
 config.resolver.nodeModulesPaths = [
@@ -29,8 +51,14 @@ config.resolver.nodeModulesPaths = [
 // "exports" instead.
 const moduleSourceEntries = {
   '@dahab-tech/react-native-media-editor': path.resolve(__dirname, '../src/index.ts'),
-  '@dahab-tech/react-native-media-editor/photoEditor': path.resolve(__dirname, '../src/photo/index.ts'),
-  '@dahab-tech/react-native-media-editor/videoEditor': path.resolve(__dirname, '../src/video/index.ts'),
+  '@dahab-tech/react-native-media-editor/photoEditor': path.resolve(
+    __dirname,
+    '../src/photo/index.ts'
+  ),
+  '@dahab-tech/react-native-media-editor/videoEditor': path.resolve(
+    __dirname,
+    '../src/video/index.ts'
+  ),
 };
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
