@@ -26,8 +26,7 @@ export interface BreakLinesInput {
 // Reference size for the scale-invariant layout; the shaper sees the same em-space rectangle on both sides.
 const REFERENCE_FONT_SIZE_PX = 100;
 
-/** Pre-breaks text into hard lines so RN + Skia never disagree on wrap points.
- *  Lays out at REFERENCE_FONT_SIZE_PX scaled by wrapWidthPx/fontSizePx so preview and export shape identically. */
+/** Pre-breaks text into hard lines so RN and Skia agree on wrap points; lays out at REFERENCE_FONT_SIZE_PX scaled by wrap/fontSize for identical preview+export shaping. */
 export function breakTextIntoLines(input: BreakLinesInput): string {
   const {
     text,
@@ -75,8 +74,7 @@ export function breakTextIntoLines(input: BreakLinesInput): string {
   if (metrics.length === 0) return text;
   if (metrics.length === 1) return text;
 
-  // endExcludingWhitespaces drops trailing spaces on soft breaks and \n on hard breaks;
-  // the join reintroduces exactly one \n per boundary.
+  // endExcludingWhitespaces drops trailing spaces and \n; the join reintroduces exactly one \n per boundary.
   const lines: string[] = [];
   for (const m of metrics) {
     lines.push(text.slice(m.startIndex, m.endExcludingWhitespaces));

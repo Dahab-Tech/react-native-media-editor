@@ -44,5 +44,15 @@ public class MediaEditorModule: Module {
         }
       }
     }
+
+    AsyncFunction("readCacheFile") { (uri: String, promise: Promise) in
+      Task {
+        do {
+          promise.resolve(try PhotoFileWriter.readAsBase64(uri: uri))
+        } catch {
+          promise.reject(MediaEditorException(code: "ERR_READ_FILE", reason: error.localizedDescription))
+        }
+      }
+    }
   }
 }

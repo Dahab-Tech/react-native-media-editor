@@ -4,11 +4,12 @@ import React, { useMemo } from 'react';
 import { StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  runOnJS,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
 } from 'react-native-reanimated';
+// Reanimated 4 deprecates its `runOnJS` re-export; use `scheduleOnRN` from react-native-worklets (uncurried).
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { useEditorTheme } from '../../core/theming/ThemeContext';
 
@@ -44,7 +45,7 @@ export function TextColorPicker({ value, onChange }: TextColorPickerProps) {
           const next = clamp(e.x / width, 0, 1) * 360;
           hue.value = next;
           hueHex.value = hslToHex(next, 1, 0.5);
-          runOnJS(onChange)(hslToHex(next, 1, 1 - shade.value));
+          scheduleOnRN(onChange, hslToHex(next, 1, 1 - shade.value));
         })
         .onChange((e) => {
           if (width <= 0) return;
@@ -53,7 +54,7 @@ export function TextColorPicker({ value, onChange }: TextColorPickerProps) {
           hueHex.value = hslToHex(next, 1, 0.5);
         })
         .onEnd(() => {
-          runOnJS(onChange)(hslToHex(hue.value, 1, 1 - shade.value));
+          scheduleOnRN(onChange, hslToHex(hue.value, 1, 1 - shade.value));
         }),
     [width, hue, hueHex, shade, onChange]
   );
@@ -65,14 +66,14 @@ export function TextColorPicker({ value, onChange }: TextColorPickerProps) {
           if (width <= 0) return;
           const next = clamp(e.x / width, 0, 1);
           shade.value = next;
-          runOnJS(onChange)(hslToHex(hue.value, 1, 1 - next));
+          scheduleOnRN(onChange, hslToHex(hue.value, 1, 1 - next));
         })
         .onChange((e) => {
           if (width <= 0) return;
           shade.value = clamp(e.x / width, 0, 1);
         })
         .onEnd(() => {
-          runOnJS(onChange)(hslToHex(hue.value, 1, 1 - shade.value));
+          scheduleOnRN(onChange, hslToHex(hue.value, 1, 1 - shade.value));
         }),
     [width, hue, shade, onChange]
   );
@@ -89,7 +90,7 @@ export function TextColorPicker({ value, onChange }: TextColorPickerProps) {
   useAnimatedReaction(
     () => hueHex.value,
     (next, prev) => {
-      if (next !== prev) runOnJS(setHueMidHex)(next);
+      if (next !== prev) scheduleOnRN(setHueMidHex, next);
     }
   );
 

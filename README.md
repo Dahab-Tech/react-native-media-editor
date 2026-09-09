@@ -1,13 +1,13 @@
 # @dahab-tech/react-native-media-editor
 
-The **React Native photo & video editor SDK** for Expo — customizable, RTL-first, IMG.LY alternative.
+The **React Native photo & video editor SDK** for Expo — customizable, RTL-first, free and MIT-licensed.
 
-→ Full docs & demo at [dahab-tech.com/apps/media-editor](https://dahab-tech.com/apps/media-editor)
+→ Full docs & demo at [dahab-tech.com/apps/react-native-media-editor](https://dahab-tech.com/apps/react-native-media-editor)
 
-- **Video**: lossless trim (passthrough export), crop, opt-in bitrate/dimension compression, cover/thumbnail selection, video metadata — powered by AVFoundation (iOS) and Media3 Transformer (Android). No FFmpeg.
-- **Photo**: Skia-based editor with crop/rotate/flip, brightness/contrast/saturation adjustments, filter presets, text overlays, and full-resolution JPEG export.
+- **Photo**: crop with straighten dial + aspect presets, 15 adjustments, 64 built-in filters, overlays, selective focus (radial + linear tilt-shift), draw (4 brushes), text with per-line pill backgrounds, stickers/emoji, multi-photo batch, full-resolution export.
+- **Video**: trim (lossless passthrough), crop, cover selection, filters + adjustments with live preview, playback speed (audio retimed), text/sticker/draw layers burned into export, opt-in compression — powered by AVFoundation (iOS) and Media3 Transformer (Android). No FFmpeg.
 - **RTL & i18n**: English and Arabic built in, custom strings supported, per-editor direction control (no global `I18nManager` reliance).
-- **Theming**: dark theme by default, fully overridable colors/spacing/radius.
+- **Theming**: light + dark themes, fully overridable colors/spacing/radius.
 
 ## Installation
 
@@ -29,15 +29,15 @@ Only install what you use:
 
 | Feature | Extra dependencies |
 | --- | --- |
-| `PhotoEditor` component | `npx expo install @shopify/react-native-skia react-native-reanimated react-native-gesture-handler react-native-safe-area-context` |
-| `VideoEditor` component | `npx expo install expo-video react-native-reanimated react-native-gesture-handler react-native-safe-area-context` |
+| `PhotoEditor` component | `npx expo install @shopify/react-native-skia react-native-reanimated react-native-worklets react-native-gesture-handler react-native-safe-area-context @expo/vector-icons expo-font` |
+| `VideoEditor` component | `npx expo install @shopify/react-native-skia expo-video react-native-reanimated react-native-worklets react-native-gesture-handler react-native-safe-area-context @expo/vector-icons expo-font` |
 | Functional video API (`trimVideo`, `getVideoThumbnail`, `getVideoInfo`) | none |
 
-The default Expo (expo-router) template already includes `react-native-reanimated`, `react-native-gesture-handler`, and `react-native-safe-area-context` — in that case only `@shopify/react-native-skia` and/or `expo-video` are new. If Metro fails with `Unable to resolve module <package>`, that peer is missing: run the matching install line above and rebuild your development build.
+Both editors need `@shopify/react-native-skia` — the video editor renders its effects preview and text/sticker overlays with Skia too. Both editors also require `react-native-reanimated` **v4 or later** with `react-native-worklets` alongside it (Reanimated 4 moved the worklet-core APIs out into `react-native-worklets`); Expo SDK 54+ templates install both by default. On Android, `VideoEditor` requires `minSdkVersion` 26+ (Skia's video decoder is compiled against your app's minSdk and throws below 26 — on every device, regardless of OS version). With Expo, set it via [`expo-build-properties`](https://docs.expo.dev/versions/latest/sdk/build-properties/): `"android": { "minSdkVersion": 26 }`. The default Expo (expo-router) template already includes `react-native-reanimated`, `react-native-worklets`, `react-native-gesture-handler`, `react-native-safe-area-context`, `@expo/vector-icons`, and `expo-font` — in that case only `@shopify/react-native-skia` and/or `expo-video` are new. If Metro fails with `Unable to resolve module <package>`, that peer is missing: run the matching install line above and rebuild your development build.
 
 ## Usage
 
-### Video editor (trim + crop + cover selection)
+### Video editor (trim, crop, cover, filters, adjustments, speed, text/sticker/draw layers)
 
 ```tsx
 import { VideoEditor } from '@dahab-tech/react-native-media-editor/videoEditor';
@@ -103,7 +103,7 @@ import { PhotoEditor } from '@dahab-tech/react-native-media-editor/photoEditor';
 />
 ```
 
-Built-in tools: **Crop** (free/1:1/4:3/16:9/9:16 aspect presets, 90° rotate, flip), **Adjust** (brightness, contrast, saturation), **Filters** (Original, Mono, Sepia, Vivid, Warm, Cool, Fade with live previews), and **Text** (draggable overlays with color and scale controls). Export renders at the image's intrinsic resolution, not the screen size.
+Built-in tools: **Crop** (free/1:1/4:3/16:9/9:16 aspect presets, straighten dial, 90° rotate, flip), **Adjust** (15 parameters including brightness, contrast, saturation, exposure, highlights/shadows, temperature/tint, sharpen, structure, vignette), **Filters** (64 built-in presets with live previews), **Overlays** (Light + Mood packs), **Focus** (radial + linear tilt-shift), **Draw** (4 brushes), **Text** (draggable overlays with color, font, alignment, and per-line pill backgrounds), and **Stickers/emoji**. Multi-photo batch mode is supported. Export renders at the image's intrinsic resolution, not the screen size.
 
 ## RTL & localization
 

@@ -34,6 +34,7 @@ export type EditorIconName =
   | 'alignRight'
   | 'backgroundFill'
   | 'font'
+  | 'chevronForward'
   | 'ai';
 
 export interface EditorIconProps {
@@ -80,6 +81,7 @@ const DEFAULT_GLYPHS: Record<EditorIconName, Glyph> = {
   alignRight: { family: 'mci', name: 'format-align-right' },
   backgroundFill: { family: 'mci', name: 'format-color-highlight' },
   font: { family: 'mci', name: 'format-font' },
+  chevronForward: { family: 'ionicons', name: 'chevron-forward' },
   ai: { family: 'mci', name: 'creation' },
 };
 

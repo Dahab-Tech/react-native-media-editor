@@ -27,5 +27,40 @@ class MediaEditorModule : Module() {
     AsyncFunction("writeCacheFile") { base64: String, extension: String ->
       PhotoFileWriter.write(context, base64, extension)
     }
+
+    AsyncFunction("readCacheFile") { uri: String ->
+      PhotoFileWriter.readAsBase64(uri)
+    }
+
+    // Warm MediaCodec scrub session; JS falls back to ScrubFrameOverlay on reject or onFatalError.
+    AsyncFunction("createScrubSession") { uri: String ->
+      val (id, info) = ScrubEngine.create(context, uri)
+      mapOf(
+        "sessionId" to id,
+        "width" to info.width,
+        "height" to info.height,
+        "rotation" to info.rotation,
+        "durationMs" to (info.durationUs / 1000.0),
+      )
+    }
+
+    // Fire-and-forget: latest-wins on the native side, JS never awaits.
+    AsyncFunction("scrubSessionTo") { sessionId: Int, timeMs: Double ->
+      ScrubEngine.get(sessionId)?.scrubTo((timeMs * 1000.0).toLong())
+    }
+
+    AsyncFunction("releaseScrubSession") { sessionId: Int ->
+      ScrubEngine.destroy(sessionId)
+    }
+
+    View(ScrubPreviewView::class) {
+      Events("onFatalError")
+      Prop("sessionId") { view: ScrubPreviewView, sessionId: Int? ->
+        if (sessionId != null && sessionId >= 0) view.setSessionId(sessionId)
+      }
+      Prop("videoRotation") { view: ScrubPreviewView, rotation: Int? ->
+        view.setVideoRotation(rotation ?: 0)
+      }
+    }
   }
 }

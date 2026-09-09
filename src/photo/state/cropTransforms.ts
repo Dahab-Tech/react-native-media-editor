@@ -1,7 +1,6 @@
 import { type NormalizedCrop } from './photoEditorState';
 
-/** Maps normalized crops between pre-rotation image space and post-rotation display space.
- *  Forward is `p_display = R_θ(F(p_pre))`; 90°-step rotations keep axis-alignment. */
+/** Maps normalized crops between pre-rotation image space and post-rotation display space; forward is p_display = R_θ(F(p_pre)). */
 
 export type Rotation = 0 | 90 | 180 | 270;
 

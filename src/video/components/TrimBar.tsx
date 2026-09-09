@@ -9,8 +9,11 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 
+import { createRafCoalescer } from '../../core/hooks/rafCoalescer';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
+import { EDGE_GESTURE_MARGIN } from '../../core/systemGestures';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { clamp, formatMs } from '../format';
 import { useVideoThumbnailStrip } from '../hooks/useVideoThumbnailStrip';
 
 export interface TrimBarProps {
@@ -32,17 +35,6 @@ const HANDLE_WIDTH = 20;
 const HANDLE_GRIP_HEIGHT = 24;
 const TRACK_HEIGHT = 52;
 const THUMBNAIL_COUNT = 8;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function formatMs(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
 
 export function TrimBar({
   source,
@@ -68,10 +60,23 @@ export function TrimBar({
     thumbnailMaxWidth
   );
 
+  // Local drag state so handles track the finger without a parent-state round-trip; onChange only fires on release.
+  const [dragging, setDragging] = useState(false);
+  const [liveStartMs, setLiveStartMs] = useState(startMs);
+  const [liveEndMs, setLiveEndMs] = useState(endMs);
+  const [seededStart, setSeededStart] = useState(startMs);
+  const [seededEnd, setSeededEnd] = useState(endMs);
+  if (!dragging && (seededStart !== startMs || seededEnd !== endMs)) {
+    setSeededStart(startMs);
+    setSeededEnd(endMs);
+    setLiveStartMs(startMs);
+    setLiveEndMs(endMs);
+  }
+
   const latest = useRef({
     durationMs,
-    startMs,
-    endMs,
+    startMs: liveStartMs,
+    endMs: liveEndMs,
     minDurationMs,
     trackWidth,
     onChange,
@@ -81,8 +86,8 @@ export function TrimBar({
   useEffect(() => {
     latest.current = {
       durationMs,
-      startMs,
-      endMs,
+      startMs: liveStartMs,
+      endMs: liveEndMs,
       minDurationMs,
       trackWidth,
       onChange,
@@ -92,6 +97,8 @@ export function TrimBar({
   });
 
   const dragOriginMs = useRef(0);
+  // Coalesce onScrub only — setLive*Ms stays sync so the handle tracks the finger; only one handle owns the gesture at a time.
+  const coalescer = useRef(createRafCoalescer());
 
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [startHandle] = useState(() =>
@@ -100,6 +107,7 @@ export function TrimBar({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         dragOriginMs.current = latest.current.startMs;
+        setDragging(true);
         latest.current.onScrub?.(latest.current.startMs);
       },
       onPanResponderMove: (_event, gesture) => {
@@ -109,15 +117,26 @@ export function TrimBar({
           return;
         }
         const deltaMs = (gesture.dx / usable) * s.durationMs;
+        // Clamp against the LIVE endMs so the min-duration rule tracks the current drag state.
         const next = clamp(dragOriginMs.current + deltaMs, 0, s.endMs - s.minDurationMs);
-        s.onChange(next, s.endMs);
-        s.onScrub?.(next);
+        setLiveStartMs(next);
+        // Sync the ref now — release can fire before the post-render effect updates it.
+        latest.current.startMs = next;
+        coalescer.current.schedule(() => latest.current.onScrub?.(next));
       },
       onPanResponderRelease: () => {
-        latest.current.onScrubEnd?.();
+        coalescer.current.flush();
+        const l = latest.current;
+        l.onChange(l.startMs, l.endMs);
+        setDragging(false);
+        l.onScrubEnd?.();
       },
       onPanResponderTerminate: () => {
-        latest.current.onScrubEnd?.();
+        coalescer.current.flush();
+        const l = latest.current;
+        l.onChange(l.startMs, l.endMs);
+        setDragging(false);
+        l.onScrubEnd?.();
       },
     })
   );
@@ -129,6 +148,7 @@ export function TrimBar({
       onMoveShouldSetPanResponder: () => true,
       onPanResponderGrant: () => {
         dragOriginMs.current = latest.current.endMs;
+        setDragging(true);
         latest.current.onScrub?.(latest.current.endMs);
       },
       onPanResponderMove: (_event, gesture) => {
@@ -138,42 +158,58 @@ export function TrimBar({
           return;
         }
         const deltaMs = (gesture.dx / usable) * s.durationMs;
+        // Clamp against the LIVE startMs so the min-duration rule tracks the current drag state.
         const next = clamp(
           dragOriginMs.current + deltaMs,
           s.startMs + s.minDurationMs,
           s.durationMs
         );
-        s.onChange(s.startMs, next);
-        s.onScrub?.(next);
+        setLiveEndMs(next);
+        // Sync the ref now — release can fire before the post-render effect updates it.
+        latest.current.endMs = next;
+        coalescer.current.schedule(() => latest.current.onScrub?.(next));
       },
       onPanResponderRelease: () => {
-        latest.current.onScrubEnd?.();
+        coalescer.current.flush();
+        const l = latest.current;
+        l.onChange(l.startMs, l.endMs);
+        setDragging(false);
+        l.onScrubEnd?.();
       },
       onPanResponderTerminate: () => {
-        latest.current.onScrubEnd?.();
+        coalescer.current.flush();
+        const l = latest.current;
+        l.onChange(l.startMs, l.endMs);
+        setDragging(false);
+        l.onScrubEnd?.();
       },
     })
   );
+
+  useEffect(() => {
+    const c = coalescer.current;
+    return () => c.cancel();
+  }, []);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
   };
 
   const usable = trackWidth - HANDLE_WIDTH * 2;
-  const startX = durationMs > 0 ? (startMs / durationMs) * usable : 0;
-  const endX = durationMs > 0 ? (endMs / durationMs) * usable : 0;
+  const startX = durationMs > 0 ? (liveStartMs / durationMs) * usable : 0;
+  const endX = durationMs > 0 ? (liveEndMs / durationMs) * usable : 0;
   const selectionWidth = Math.max(0, endX - startX);
   const tileWidth = usable > 0 ? usable / THUMBNAIL_COUNT : 0;
 
   return (
     <View
       style={{
-        paddingHorizontal: theme.spacing.md,
+        paddingHorizontal: EDGE_GESTURE_MARGIN ?? theme.spacing.md,
         paddingVertical: theme.spacing.sm,
       }}>
       <View style={[styles.labels, { marginBottom: theme.spacing.xs }]}>
         <Text style={[styles.timeLabel, { color: theme.colors.textMuted }]}>
-          {formatMs(startMs)}
+          {formatMs(liveStartMs)}
         </Text>
         <View
           style={[
@@ -186,10 +222,12 @@ export function TrimBar({
             },
           ]}>
           <Text style={[styles.durationText, { color: theme.colors.accent }]}>
-            {t('trim')} {formatMs(endMs - startMs)}
+            {t('trim')} {formatMs(liveEndMs - liveStartMs)}
           </Text>
         </View>
-        <Text style={[styles.timeLabel, { color: theme.colors.textMuted }]}>{formatMs(endMs)}</Text>
+        <Text style={[styles.timeLabel, { color: theme.colors.textMuted }]}>
+          {formatMs(liveEndMs)}
+        </Text>
       </View>
       {/* Time axis stays LTR in RTL locales (matches platform video players). */}
       <View
@@ -230,7 +268,7 @@ export function TrimBar({
             <View
               {...startHandle.panHandlers}
               accessibilityRole="adjustable"
-              accessibilityLabel={`${t('trim')} ${formatMs(startMs)}`}
+              accessibilityLabel={`${t('trim')} ${formatMs(liveStartMs)}`}
               style={[
                 styles.handle,
                 {
@@ -250,7 +288,7 @@ export function TrimBar({
             <View
               {...endHandle.panHandlers}
               accessibilityRole="adjustable"
-              accessibilityLabel={`${t('trim')} ${formatMs(endMs)}`}
+              accessibilityLabel={`${t('trim')} ${formatMs(liveEndMs)}`}
               style={[
                 styles.handle,
                 {

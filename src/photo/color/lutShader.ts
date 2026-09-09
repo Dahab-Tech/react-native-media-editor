@@ -5,8 +5,7 @@ import {
   type SkImageFilter,
 } from '@shopify/react-native-skia';
 
-/** HALD LUT via MakeRuntimeShaderWithChildren (declarative <RuntimeShader> only supports one child).
- *  Trilinear along blue over Skia's default bilinear per-slice sampling. Square HALD only (image edge = k³). */
+/** HALD LUT via MakeRuntimeShaderWithChildren (declarative <RuntimeShader> only takes one child); trilinear along blue over Skia bilinear per-slice; square HALD only (edge=k³). */
 const LUT_SHADER_SOURCE = /* glsl */ `
   uniform shader content;
   uniform shader lut;
@@ -15,8 +14,7 @@ const LUT_SHADER_SOURCE = /* glsl */ `
   uniform float intensity;
 
   vec4 sampleLutSlice(vec2 rgUV, float slice) {
-    // Locate the slice's NxN tile inside the HALD image, then map rgUV onto
-    // cell centers within that tile.
+    // Locate the slice's NxN tile inside the HALD image, then map rgUV onto cell centers.
     float tilesPerRow = lutTexSize / lutSize;
     float sliceX = mod(slice, tilesPerRow);
     float sliceY = floor(slice / tilesPerRow);
@@ -33,8 +31,7 @@ const LUT_SHADER_SOURCE = /* glsl */ `
     if (base.a < 0.001) {
       return half4(base);
     }
-    // Convert to un-premultiplied rgb for a stable LUT input; recompose alpha
-    // at the end. Skia layer contents come through premultiplied by default.
+    // Un-premultiply for stable LUT input (Skia layers arrive premultiplied); recompose alpha at the end.
     vec3 rgb = base.rgb / base.a;
     rgb = clamp(rgb, 0.0, 1.0);
 

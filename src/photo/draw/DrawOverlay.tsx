@@ -1,7 +1,9 @@
+import { Canvas } from '@shopify/react-native-skia';
 import React, { useEffect, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
+import { DrawStrokesLayer } from './DrawStrokesLayer';
 import type { StrokeRect } from './strokePath';
 import { generateStrokeId, type DrawBrush, type DrawStroke } from './types';
 
@@ -14,11 +16,12 @@ export interface DrawOverlayProps {
   color: string;
   /** Normalized to the photo rect min dimension. */
   size: number;
-  onStrokeUpdate: (stroke: DrawStroke) => void;
+  /** Fires per point for ERASER only — live-erase must composite against committed strokes in the parent's saveLayer; paint brushes preview locally. */
+  onStrokeUpdate?: (stroke: DrawStroke) => void;
   onStrokeEnd: (stroke: DrawStroke) => void;
 }
 
-/** Full-canvas pan capture; JS-paced so live stroke + committed strokes share one pipeline. */
+/** Full-canvas pan capture; live stroke lives in a leaf Skia canvas so per-point updates re-render only this component. Finalize commits once via onStrokeEnd (one undo entry). */
 export function DrawOverlay({
   displayRect,
   brush,
@@ -32,10 +35,23 @@ export function DrawOverlay({
     latest.current = { displayRect, brush, color, size, onStrokeUpdate, onStrokeEnd };
   });
 
+  // Live stroke lives locally — only this leaf re-renders while the finger moves.
+  const [liveStroke, setLiveStroke] = useState<DrawStroke | null>(null);
   const draft = useRef<{ stroke: DrawStroke; lastX: number; lastY: number } | null>(null);
 
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [gesture] = useState(() => {
+    const publish = (stroke: DrawStroke) => {
+      // New array + object identity so DrawStrokesLayer's per-stroke path memo invalidates.
+      const copy = { ...stroke, points: [...stroke.points] };
+      if (stroke.brush === 'eraser') {
+        // See onStrokeUpdate docs — live-erase needs the parent's committed-strokes layer.
+        latest.current.onStrokeUpdate?.(copy);
+      } else {
+        setLiveStroke(copy);
+      }
+    };
+
     const appendPoint = (x: number, y: number) => {
       const current = draft.current;
       const rect = latest.current.displayRect;
@@ -49,7 +65,7 @@ export function DrawOverlay({
         x: (x - rect.x) / rect.width,
         y: (y - rect.y) / rect.height,
       });
-      latest.current.onStrokeUpdate({ ...current.stroke, points: [...current.stroke.points] });
+      publish(current.stroke);
     };
 
     return Gesture.Pan()
@@ -72,7 +88,7 @@ export function DrawOverlay({
           ],
         };
         draft.current = { stroke, lastX: e.x, lastY: e.y };
-        s.onStrokeUpdate({ ...stroke, points: [...stroke.points] });
+        publish(stroke);
       })
       .onUpdate((e) => {
         appendPoint(e.x, e.y);
@@ -81,16 +97,29 @@ export function DrawOverlay({
         const current = draft.current;
         draft.current = null;
         if (!current) return;
+        // Parent commits to reducer (one addStroke = one undo entry); clear the local preview so both stacks don't stack.
         latest.current.onStrokeEnd({
           ...current.stroke,
           points: [...current.stroke.points],
         });
+        setLiveStroke(null);
       });
   });
 
+  // Live-stroke strokes list is memo-stable per push so DrawStrokesLayer's map key is trivial.
+  const liveStrokes = liveStroke ? [liveStroke] : [];
+
   return (
-    <GestureDetector gesture={gesture}>
-      <View style={StyleSheet.absoluteFill} collapsable={false} />
-    </GestureDetector>
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* Paint-brush live stroke in isolated canvas — per-point updates re-render only this leaf; eraser bypasses to the parent. */}
+      {liveStroke && displayRect.width > 0 && displayRect.height > 0 && (
+        <Canvas style={StyleSheet.absoluteFill} pointerEvents="none">
+          <DrawStrokesLayer strokes={liveStrokes} rect={displayRect} />
+        </Canvas>
+      )}
+      <GestureDetector gesture={gesture}>
+        <View style={StyleSheet.absoluteFill} collapsable={false} />
+      </GestureDetector>
+    </View>
   );
 }

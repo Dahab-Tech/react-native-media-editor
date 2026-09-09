@@ -208,8 +208,7 @@ export function PhotoRender({
       <Group clip={{ x: offsetX, y: offsetY, width: drawW, height: drawH }} layer={layer}>
         <Group
           origin={{ x: centerX, y: centerY }}
-          // Skia post-multiplies with column vectors, so the applied per-point mapping is
-          // R_straighten · R_90 · F (flip → 90°-step → straighten).
+          // Skia post-multiplies column vectors, so per-point mapping is R_straighten · R_90 · F (flip → 90°-step → straighten).
           transform={[
             { rotate: straightenRad },
             { rotate: rotationRad },

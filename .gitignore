@@ -58,3 +58,6 @@ yarn-error.log
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Raw demo recordings (masters for marketing clips — kept local only)
+demo/

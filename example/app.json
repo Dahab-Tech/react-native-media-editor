@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "backgroundColor": "#0E0E11",
     "plugins": [
       [
         "expo-splash-screen",
@@ -14,6 +15,14 @@
           "resizeMode": "contain",
           "backgroundColor": "#0E0E11",
           "imageWidth": 200
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
         }
       ]
     ],

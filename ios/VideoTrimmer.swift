@@ -26,8 +26,7 @@ struct VideoTrimmer {
     let hasColorEdit = colorMatrix != nil || lutImage != nil
     let compression = options.compression
 
-    // Any non-passthrough edit (crop/overlay/color/speed) forces re-encode; pure trims stay passthrough.
-    // Presence of `compression` also forces re-encode via the writer pipeline.
+    // Any non-passthrough edit (crop/overlay/color/speed/compression) forces re-encode; pure trims stay passthrough.
     let needsComposition =
       options.crop != nil || overlayImage != nil || hasColorEdit || hasSpeedEdit
       || compression != nil
@@ -45,9 +44,7 @@ struct VideoTrimmer {
       workingTimeRange = sourceTimeRange
     }
 
-    // Compression path: AVAssetReader/Writer with a bitrate-controlled H.264 encoder.
-    // The existing composition builder is reused so crop / color / overlay / speed
-    // stay bit-identical to the AVAssetExportSession path.
+    // Compression path: reuse the composition builder so crop/color/overlay/speed stay bit-identical to the export-session path.
     if let compression {
       let composition = try await makeVideoComposition(
         asset: workingAsset,
@@ -159,9 +156,7 @@ struct VideoTrimmer {
     return (composition, CMTimeRange(start: .zero, duration: scaledDuration))
   }
 
-  /// Build a video composition sized to crop-or-display; installs `ColorCompositor` when color processing is active.
-  /// Passing `maxDimension` scales renderSize + layer transform so the output's long edge ≤ maxDimension
-  /// (never upscales), rounded to even numbers because H.264 encoders reject odd dims.
+  /// Composition sized to crop-or-display; installs ColorCompositor when color is active. maxDimension caps long edge (never upscales), even-rounded for H.264.
   private static func makeVideoComposition(
     asset: AVAsset,
     crop: CropRectOptions?,
@@ -283,9 +278,7 @@ struct VideoTrimmer {
     return raw
   }
 
-  /// AVAssetReader → AVAssetWriter pipeline for the compression path. Uses the same
-  /// `AVMutableVideoComposition` as the export-session path so crop / color / overlay / speed
-  /// stay bit-identical. Video is H.264 at the resolved bitrate; audio is AAC 128 kbps.
+  /// AVAssetReader→AVAssetWriter pipeline for compression; shares the export-session composition (bit-identical crop/color/overlay/speed). H.264 + AAC 128 kbps.
   private static func exportWithCompression(
     asset: AVAsset,
     timeRange: CMTimeRange,
@@ -398,7 +391,7 @@ struct VideoTrimmer {
     guard writer.startWriting() else {
       throw MediaEditorError.exportFailed(writer.error?.localizedDescription ?? "writer start failed")
     }
-    writer.startSession(atSourceTime: .zero)
+    writer.startSession(atSourceTime: timeRange.start)
 
     let videoQueue = DispatchQueue(label: "com.dahabtech.mediaeditor.compression.video")
     let audioQueue = DispatchQueue(label: "com.dahabtech.mediaeditor.compression.audio")

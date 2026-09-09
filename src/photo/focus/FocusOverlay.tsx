@@ -43,12 +43,12 @@ export function FocusOverlay({
 
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [gesture] = useState(() => {
-    const begin = (slot: React.MutableRefObject<PhotoFocus | null>) => {
+    const begin = (slot: React.RefObject<PhotoFocus | null>) => {
       slot.current = latest.current.focus;
       latest.current.onInteractionStart();
       setActiveGestures((n) => n + 1);
     };
-    const end = (slot: React.MutableRefObject<PhotoFocus | null>) => {
+    const end = (slot: React.RefObject<PhotoFocus | null>) => {
       if (slot.current == null) return;
       slot.current = null;
       setActiveGestures((n) => Math.max(0, n - 1));

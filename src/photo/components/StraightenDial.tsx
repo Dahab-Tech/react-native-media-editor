@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   PanResponder,
   Pressable,
@@ -84,10 +84,14 @@ export function StraightenDial({ value, onChange, onSlidingStart }: StraightenDi
   const centerX = trackWidth / 2;
   const rulerSign = isRTL ? -1 : 1;
 
-  const ticks: { deg: number; major: boolean }[] = [];
-  for (let d = STRAIGHTEN_MIN; d <= STRAIGHTEN_MAX; d += MINOR_STEP) {
-    ticks.push({ deg: d, major: d % MAJOR_STEP === 0 });
-  }
+  // Tick list is deterministic from module constants — memoize so re-renders don't rebuild it.
+  const ticks = useMemo(() => {
+    const arr: { deg: number; major: boolean }[] = [];
+    for (let d = STRAIGHTEN_MIN; d <= STRAIGHTEN_MAX; d += MINOR_STEP) {
+      arr.push({ deg: d, major: d % MAJOR_STEP === 0 });
+    }
+    return arr;
+  }, []);
 
   const accent = theme.colors.accent;
   const scrimText = '#FFFFFF';
@@ -114,58 +118,57 @@ export function StraightenDial({ value, onChange, onSlidingStart }: StraightenDi
           </Text>
         </Pressable>
       </View>
-      <View
-        {...responder.panHandlers}
-        onLayout={handleLayout}
-        style={[styles.track, { height: DIAL_HEIGHT }]}>
-        {trackWidth > 0 &&
-          ticks.map((tick) => {
-            const offsetPx = (value - tick.deg) * PX_PER_DEG * rulerSign;
-            const x = centerX + offsetPx;
-            if (x < -20 || x > trackWidth + 20) return null;
-            return (
-              <React.Fragment key={tick.deg}>
-                <View
-                  pointerEvents="none"
-                  style={{
-                    position: 'absolute',
-                    left: x - TICK_WIDTH / 2,
-                    top: (DIAL_HEIGHT - (tick.major ? MAJOR_TICK_H : MINOR_TICK_H)) / 2,
-                    width: TICK_WIDTH,
-                    height: tick.major ? MAJOR_TICK_H : MINOR_TICK_H,
-                    backgroundColor: tick.major ? scrimText : minorColor,
-                  }}
-                />
-                {tick.major && (
-                  <Text
+      <View style={[styles.track, { height: DIAL_HEIGHT }]}>
+        <View {...responder.panHandlers} onLayout={handleLayout} style={StyleSheet.absoluteFill}>
+          {trackWidth > 0 &&
+            ticks.map((tick) => {
+              const offsetPx = (value - tick.deg) * PX_PER_DEG * rulerSign;
+              const x = centerX + offsetPx;
+              if (x < -20 || x > trackWidth + 20) return null;
+              return (
+                <React.Fragment key={tick.deg}>
+                  <View
                     pointerEvents="none"
                     style={{
                       position: 'absolute',
-                      left: x - 20,
-                      width: 40,
-                      textAlign: 'center',
-                      top: DIAL_HEIGHT / 2 + MAJOR_TICK_H / 2 + 2,
-                      fontSize: LABEL_FONT_SIZE,
-                      color: scrimTextMuted,
-                      fontVariant: ['tabular-nums'],
-                    }}>
-                    {tick.deg}
-                  </Text>
-                )}
-              </React.Fragment>
-            );
-          })}
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            left: centerX - 1,
-            top: INDICATOR_TOP_INSET,
-            bottom: 0,
-            width: 2,
-            backgroundColor: accent,
-          }}
-        />
+                      left: x - TICK_WIDTH / 2,
+                      top: (DIAL_HEIGHT - (tick.major ? MAJOR_TICK_H : MINOR_TICK_H)) / 2,
+                      width: TICK_WIDTH,
+                      height: tick.major ? MAJOR_TICK_H : MINOR_TICK_H,
+                      backgroundColor: tick.major ? scrimText : minorColor,
+                    }}
+                  />
+                  {tick.major && (
+                    <Text
+                      pointerEvents="none"
+                      style={{
+                        position: 'absolute',
+                        left: x - 20,
+                        width: 40,
+                        textAlign: 'center',
+                        top: DIAL_HEIGHT / 2 + MAJOR_TICK_H / 2 + 2,
+                        fontSize: LABEL_FONT_SIZE,
+                        color: scrimTextMuted,
+                        fontVariant: ['tabular-nums'],
+                      }}>
+                      {tick.deg}
+                    </Text>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: centerX - 1,
+              top: INDICATOR_TOP_INSET,
+              bottom: 0,
+              width: 2,
+              backgroundColor: accent,
+            }}
+          />
+        </View>
       </View>
     </View>
   );

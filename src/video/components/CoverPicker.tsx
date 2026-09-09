@@ -11,8 +11,11 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 
+import { createRafCoalescer } from '../../core/hooks/rafCoalescer';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
+import { EDGE_GESTURE_MARGIN } from '../../core/systemGestures';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { clamp, formatMs } from '../format';
 import { useVideoThumbnailStrip } from '../hooks/useVideoThumbnailStrip';
 
 export interface CoverPickerProps {
@@ -36,17 +39,6 @@ const PLAYHEAD_WIDTH = 3;
 const PLAYHEAD_HANDLE_WIDTH = 18;
 const PLAYHEAD_HANDLE_HEIGHT = 20;
 const PLAYHEAD_HIT_INFLATE = 12;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
-}
-
-function formatMs(ms: number): string {
-  const totalSeconds = Math.max(0, Math.round(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
 
 /** Bottom-panel cover picker: thumbnail strip + draggable playhead + Cancel/Save row. Time axis stays LTR (matches iOS Photos / Instagram). */
 export function CoverPicker({
@@ -88,6 +80,8 @@ export function CoverPicker({
   });
 
   const dragOriginMs = useRef(0);
+  // Coalesce onScrub only — setMarkerMs stays sync so the playhead tracks the finger; onScrub hits the native bridge and needs rate-limiting.
+  const coalescer = useRef(createRafCoalescer());
 
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [responder] = useState(() =>
@@ -104,16 +98,23 @@ export function CoverPicker({
         const deltaMs = (gesture.dx / s.trackWidth) * s.durationMs;
         const next = clamp(dragOriginMs.current + deltaMs, 0, s.durationMs);
         setMarkerMs(next);
-        s.onScrub(next);
+        coalescer.current.schedule(() => latest.current.onScrub(next));
       },
       onPanResponderRelease: () => {
+        coalescer.current.flush();
         latest.current.onScrubEnd?.();
       },
       onPanResponderTerminate: () => {
+        coalescer.current.flush();
         latest.current.onScrubEnd?.();
       },
     })
   );
+
+  useEffect(() => {
+    const c = coalescer.current;
+    return () => c.cancel();
+  }, []);
 
   const handleTrackLayout = (event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);
@@ -152,7 +153,7 @@ export function CoverPicker({
         </View>
       </View>
 
-      <View style={{ paddingHorizontal: theme.spacing.md }}>
+      <View style={{ paddingHorizontal: EDGE_GESTURE_MARGIN ?? theme.spacing.md }}>
         <View
           onLayout={handleTrackLayout}
           style={[

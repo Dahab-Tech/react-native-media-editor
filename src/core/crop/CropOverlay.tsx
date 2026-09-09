@@ -205,8 +205,7 @@ export function CropOverlay({
     s.onChange({ x: cropX, y: cropY, width: cropW, height: cropH });
   };
 
-  // Single-finger pan. Fit mode: photo follows finger (frame fixed, crop origin moves opposite).
-  // Anchored mode: the frame IS what moves on screen, so the crop origin follows the finger.
+  // Fit mode: photo follows finger (frame fixed, crop origin moves opposite). Anchored mode: the frame itself moves, so crop origin follows the finger.
   const panDirection = mode === 'anchored' ? 1 : -1;
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [panResponder] = useState(() =>
@@ -247,7 +246,7 @@ export function CropOverlay({
     })
   );
 
-  // Two-finger pinch: zoom the photo about the focal point. Disabled in anchored mode (video crop is resize-only).
+  // Two-finger pinch zooms about the focal point; disabled in anchored mode (video crop is resize-only).
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [pinch] = useState(() =>
     Gesture.Pinch()

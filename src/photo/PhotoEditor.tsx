@@ -13,7 +13,7 @@ import React, {
   useMemo,
   useRef,
   useState,
-  type MutableRefObject,
+  type RefObject,
   type ReactNode,
 } from 'react';
 import {
@@ -30,11 +30,12 @@ import {
 } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, { SlideInDown, SlideOutDown } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MediaEditorProvider, type MediaEditorConfigProps } from '../core/MediaEditorProvider';
 import { EditorHeader } from '../core/components/EditorHeader';
 import { EditorShell } from '../core/components/EditorShell';
+import { useConsumeAndroidBack } from '../core/hooks/useConsumeAndroidBack';
 import { useEditorI18n, type EditorI18n } from '../core/i18n/I18nContext';
 import { EditorIcon } from '../core/icons/IconContext';
 import { useEditorTheme } from '../core/theming/ThemeContext';
@@ -184,7 +185,7 @@ type PhotoEditorScreenProps = Omit<PhotoSingleSourceProps, keyof MediaEditorConf
   /** Replaces the built-in EditorHeader (used by the batch shell). */
   headerSlot?: ReactNode;
   /** Imperative export handle for a parent (batch shell). */
-  screenRef?: MutableRefObject<PhotoScreenHandle | null>;
+  screenRef?: RefObject<PhotoScreenHandle | null>;
 };
 
 /** Imperative surface the screen exposes to a parent. */
@@ -202,6 +203,8 @@ function PhotoBatchShell({
   onError,
   ...perPhotoProps
 }: PhotoBatchShellProps) {
+  // Read (not destructure) so the child screen keeps receiving exportOptions unchanged.
+  const includeBase64 = perPhotoProps.exportOptions?.includeBase64 ?? false;
   const { t, isRTL, locale } = useEditorI18n();
   const theme = useEditorTheme();
 
@@ -266,8 +269,7 @@ function PhotoBatchShell({
       const captured = liveStateRef.current;
       const prevSnap = snapshots[currentIndex];
       const cached = exportCache[currentIndex];
-      // Cache trusted only when captured state is reference-equal to the snapshot
-      // it was written against (captureCurrent's setState clear is async).
+      // Cache trusted only when captured === snapshot by reference; captureCurrent's setState clear is async.
       let result: PhotoExportResult | null = null;
       if (cached != null && prevSnap === captured) {
         result = cached;
@@ -280,7 +282,11 @@ function PhotoBatchShell({
         if (result == null) {
           return;
         }
-        const fresh = result;
+        // Drop base64 before caching — encoded bytes live on disk at `uri`; reconstitute lazily at final delivery to avoid N multi-MB strings.
+        const fresh: PhotoExportResult =
+          result.base64 != null
+            ? { uri: result.uri, width: result.width, height: result.height, format: result.format }
+            : result;
         setExportCache((prev) => {
           const next = prev.slice();
           next[currentIndex] = fresh;
@@ -295,7 +301,24 @@ function PhotoBatchShell({
         if (missing) {
           throw new Error('Batch export incomplete — retry required');
         }
-        onExport?.(orderedCache as readonly PhotoExportResult[]);
+        const ordered = orderedCache as PhotoExportResult[];
+        if (includeBase64) {
+          // Sequential reads — peak memory already holds N strings (public API delivers together); series avoids per-file transient buffers.
+          const finalResults: PhotoExportResult[] = new Array(ordered.length);
+          for (let i = 0; i < ordered.length; i++) {
+            const entry = ordered[i];
+            // Fresh export on this tick still has base64 in hand; cached entries were stripped.
+            if (entry.base64 != null) {
+              finalResults[i] = entry;
+            } else {
+              const base64 = await MediaEditorModule.readCacheFile(entry.uri);
+              finalResults[i] = { ...entry, base64 };
+            }
+          }
+          onExport?.(finalResults);
+        } else {
+          onExport?.(ordered);
+        }
       } else {
         setCurrentIndex(currentIndex + 1);
       }
@@ -313,6 +336,7 @@ function PhotoBatchShell({
     snapshots,
     onError,
     onExport,
+    includeBase64,
   ]);
 
   const handleCancel = useCallback(() => {
@@ -444,7 +468,7 @@ function BatchHeader({
               batchHeaderStyles.chevron,
               { transform: [{ rotate: isRTL ? '0deg' : '180deg' }] },
             ]}>
-            <Text style={{ color: theme.colors.text, fontSize: 22, fontWeight: '500' }}>›</Text>
+            <EditorIcon name="chevronForward" size={20} color={theme.colors.text} />
           </View>
         </Pressable>
         <Text
@@ -467,7 +491,7 @@ function BatchHeader({
               batchHeaderStyles.chevron,
               { transform: [{ rotate: isRTL ? '180deg' : '0deg' }] },
             ]}>
-            <Text style={{ color: theme.colors.text, fontSize: 22, fontWeight: '500' }}>›</Text>
+            <EditorIcon name="chevronForward" size={20} color={theme.colors.text} />
           </View>
         </Pressable>
       </View>
@@ -624,8 +648,7 @@ function PhotoEditorScreen({
   const theme = useEditorTheme();
   const { t } = useEditorI18n();
   const sourceUri = useMemo(() => normalizeSource(source), [source]);
-  // Skia's useImage silently returns null on decode failure (e.g. HEIC on iOS); the error callback
-  // is the only way to distinguish "still loading" from "failed to load".
+  // Skia's useImage returns null on decode failure (e.g. HEIC on iOS); the error callback is the only way to distinguish "loading" from "failed".
   const [loadError, setLoadError] = useState<Error | null>(null);
   const handleImageError = useCallback(
     (err: Error) => {
@@ -669,8 +692,7 @@ function PhotoEditorScreen({
     const base = allowedTools ?? PHOTO_TOOL_IDS;
     return base.filter((id) => (id === 'ai' ? aiTabAllowed : true));
   }, [allowedTools, aiTabAllowed]);
-  // Second unconditional useImage for the AI background-removal override. Load errors
-  // swallowed on purpose — the AITool panel owns AI failure UX.
+  // Second unconditional useImage for the AI background-removal override; errors swallowed — AITool owns AI failure UX.
   const backgroundOverrideImage = useImage(controller.state.backgroundRemovedUri ?? undefined);
   const effectiveImage = backgroundOverrideImage ?? image;
   useEffect(() => {
@@ -682,11 +704,11 @@ function PhotoEditorScreen({
     });
   }, [image, lockedAspect, dispatch]);
   const insets = useSafeAreaInsets();
+  useConsumeAndroidBack();
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [exporting, setExporting] = useState(false);
   const [toolbarHeight, setToolbarHeight] = useState(0);
-  // Floating panel is absolutely positioned; Yoga uses the border box, ignoring the SafeAreaView's
-  // bottom padding — add insets.bottom so the panel butts against the toolbar's top edge.
+  // Floating panel is absolute-positioned; Yoga uses the border box and ignores container bottom padding, so add insets.bottom manually.
   const panelBottom = toolbarHeight + insets.bottom;
 
   const activeTool = controller.state.activeTool;
@@ -703,8 +725,7 @@ function PhotoEditorScreen({
   }
 
   const [drawSettings, setDrawSettings] = useState(createDefaultDrawSettings);
-  // Live-stroke handoff: canvas renders this until state.strokes contains the id, so the reducer
-  // echo takes over in the same commit and the stroke never blinks.
+  // Paint strokes live inside DrawOverlay's Skia leaf; only eraser strokes surface here per point (live-erase composites against committed strokes).
   const [liveStroke, setLiveStroke] = useState<DrawStroke | null>(null);
   const liveStrokeCommitted =
     liveStroke != null && controller.state.strokes.some((s) => s.id === liveStroke.id);
@@ -712,6 +733,13 @@ function PhotoEditorScreen({
     setLiveStroke(null);
   }
   const pendingLiveStroke = liveStrokeCommitted ? null : liveStroke;
+  const renderStrokes = useMemo(
+    () =>
+      pendingLiveStroke
+        ? [...controller.state.strokes, pendingLiveStroke]
+        : controller.state.strokes,
+    [controller.state.strokes, pendingLiveStroke]
+  );
 
   // Focus-editor session: kept out of the reducer so a session collapses into one commit at Done.
   const [textFocus, setTextFocus] = useState<TextFocusSession | null>(null);
@@ -723,8 +751,7 @@ function PhotoEditorScreen({
 
   const inCropMode = activeTool === 'crop';
   const cropCanvasBottomInset = inCropMode ? (panelHidden ? stripHeight : panelHeight) : 0;
-  // Gate crop-mode contents on the panel having measured so the first frame is the stable-layout frame
-  // (avoids the "crop rect suddenly shrinks" race when onLayout lands post-commit).
+  // Gate on panel-measured so the first frame is stable — otherwise a post-commit onLayout shrinks the crop rect.
   const cropLayoutReady = !inCropMode || (panelHidden ? stripHeight > 0 : panelHeight > 0);
 
   const cropOutputRect = useMemo(() => {
@@ -790,15 +817,6 @@ function PhotoEditorScreen({
   const stickerImages = useResolvedStickerImages(controller.state.layers, stickerPacks);
 
   const customFontTypefaces = useCustomFontProvider(customFonts);
-
-  // Live canvas strokes: committed + pending appended last so a live eraser clears what's drawn.
-  const renderStrokes = useMemo(
-    () =>
-      pendingLiveStroke
-        ? [...controller.state.strokes, pendingLiveStroke]
-        : controller.state.strokes,
-    [controller.state.strokes, pendingLiveStroke]
-  );
 
   const handleStrokeEnd = useCallback(
     (stroke: DrawStroke) => {
@@ -953,8 +971,7 @@ function PhotoEditorScreen({
     [dispatch, controller]
   );
 
-  // Crop is a confirm/cancel session: snapshot geometry on entry, restore it if the user
-  // leaves without tapping the tick (switching tools = cancel, like the video editor).
+  // Crop is confirm/cancel: snapshot geometry on entry, restore if the user leaves without the tick (switching tools = cancel).
   const cropSessionRef = useRef<{
     crop: NormalizedCrop;
     aspect: AspectRatio;
@@ -1014,8 +1031,7 @@ function PhotoEditorScreen({
     setTextFocus({ kind: 'existing', layer });
   }, []);
 
-  // Focus editor commit: empty text on new → discard; empty on existing → removeLayer;
-  // non-empty → one checkpoint + addLayer/updateLayer (max one history entry per session).
+  // Focus commit: empty on new→discard, empty on existing→removeLayer, non-empty→one checkpoint + add/update (one history entry per session).
   const handleTextFocusDone = useCallback(
     ({ session, draft }: TextFocusResult) => {
       const trimmed = draft.text.trim();
@@ -1070,7 +1086,18 @@ function PhotoEditorScreen({
   const panelVisible = activeTool != null && !panelHidden && !focusOpen;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    // Hook insets, not native SafeAreaView: batch shell remounts (key={index}) and Android's SafeAreaView re-measures after first paint (safe-area jump).
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: theme.colors.background,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+      ]}>
       <View
         style={focusOpen ? styles.chromeHidden : null}
         pointerEvents={focusOpen ? 'none' : 'auto'}>
@@ -1098,8 +1125,7 @@ function PhotoEditorScreen({
           {image && canvasSize.width > 0 && cropLayoutReady ? (
             <>
               {inCropMode ? (
-                // Crop mode: render full image, translate+scale the canvas so the sub-crop lands under the fixed frame.
-                // Straighten wraps as an OUTER rotate about the frame center; PhotoRender gets straighten=0.
+                // Crop mode: render full image, translate+scale canvas so the sub-crop lands under the fixed frame; straighten wraps as an OUTER rotate.
                 <View
                   pointerEvents="none"
                   style={[
@@ -1392,7 +1418,7 @@ function PhotoEditorScreen({
           <Text style={[styles.busyLabel, { color: '#FFFFFF' }]}>{t('processing')}</Text>
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 

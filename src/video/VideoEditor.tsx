@@ -1,10 +1,11 @@
 import { Canvas, drawAsImage, ImageFormat, useImage } from '@shopify/react-native-skia';
 import { useEvent } from 'expo';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { useVideoPlayer, VideoView, type VideoPlayer } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Keyboard,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -18,11 +19,12 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MediaEditorProvider, type MediaEditorConfigProps } from '../core/MediaEditorProvider';
 import { EditorHeader } from '../core/components/EditorHeader';
 import { EditorShell } from '../core/components/EditorShell';
+import { useConsumeAndroidBack } from '../core/hooks/useConsumeAndroidBack';
 import { useEditorI18n } from '../core/i18n/I18nContext';
 import { EditorIcon, type EditorIconName } from '../core/icons/IconContext';
 import { useEditorTheme } from '../core/theming/ThemeContext';
@@ -49,6 +51,8 @@ import {
 } from '../photo/layers';
 import { resolveOverlay, type PhotoOverlayPack } from '../photo/overlays';
 import { ColorPreviewCanvas } from './components/ColorPreviewCanvas';
+import { ScrubEnginePreview } from './components/ScrubEnginePreview';
+import { ScrubFrameOverlay } from './components/ScrubFrameOverlay';
 import {
   aspectRatioValue,
   ASPECT_RATIO_PRESETS,
@@ -98,6 +102,25 @@ const TEXT_BASE_RATIO = 0.06;
 /** Base sticker size as a fraction of the shorter output dimension. */
 const STICKER_BASE_RATIO = 0.2;
 
+// Drag seeks stay frame-exact (expo-video 0/0 tolerance); Media3 scrubbing mode is avoided — it stalls low-end decoders mid-drag.
+
+// Module scope so react-hooks/immutability doesn't flag expo-video's documented `currentTime=` seek API.
+function scrubPlayerTo(player: VideoPlayer, seconds: number) {
+  if (player.playing) player.pause();
+  player.currentTime = seconds;
+}
+
+function settlePlayerTo(player: VideoPlayer, seconds: number) {
+  try {
+    player.currentTime = seconds;
+  } catch {
+    // The player may already be released when the scrub cleanup runs on unmount.
+  }
+}
+
+// Each seek flushes the codec; per-tick 60Hz seeks would flush before any frame renders and freeze the whole drag.
+const SCRUB_SEEK_INTERVAL_MS = 100;
+
 export interface VideoEditorProps extends MediaEditorConfigProps {
   /** Local or remote video URI. */
   source: string;
@@ -106,10 +129,7 @@ export interface VideoEditorProps extends MediaEditorConfigProps {
   onCancel?: () => void;
   /** Called with the trimmed file once export succeeds. */
   onExport?: (result: TrimResult) => void;
-  /**
-   * Called after a cover frame is captured at the current playback position.
-   * If no cover was picked by the time export succeeds, fires with the exported video's first frame.
-   */
+  /** Fires when a cover frame is captured; if none picked before export, fires with the exported video's first frame. */
   onCoverSelected?: (result: ThumbnailResult) => void;
   onError?: (error: Error) => void;
   /** Smallest selectable trim range. Defaults to 1000 ms. */
@@ -128,11 +148,7 @@ export interface VideoEditorProps extends MediaEditorConfigProps {
   filterPacks?: readonly PhotoFilterPack[];
   /** Overlay packs appended after built-ins. */
   overlayPacks?: readonly PhotoOverlayPack[];
-  /**
-   * Opt-in bitrate / dimension cap applied at export time. Presence forces
-   * a re-encode even for pure trims. No UI is rendered for this — it is a
-   * consumer-config prop passed through to `trimVideo`.
-   */
+  /** Opt-in bitrate/dimension cap at export; presence forces re-encode even for pure trims. */
   compression?: VideoCompressionOptions;
 }
 
@@ -184,6 +200,7 @@ function VideoEditorScreen({
   const theme = useEditorTheme();
   const { t, isRTL } = useEditorI18n();
   const insets = useSafeAreaInsets();
+  useConsumeAndroidBack();
 
   const [info, setInfo] = useState<VideoInfo | null>(null);
   const [busy, setBusy] = useState(false);
@@ -240,12 +257,13 @@ function VideoEditorScreen({
     return () => subscription.remove();
   }, [player, loopRange.startMs, loopRange.endMs]);
 
-  const reportError = useCallback(
-    (error: unknown) => {
-      onError?.(error instanceof Error ? error : new Error(String(error)));
-    },
-    [onError]
-  );
+  const onErrorRef = useRef(onError);
+  useEffect(() => {
+    onErrorRef.current = onError;
+  });
+  const reportError = useCallback((error: unknown) => {
+    onErrorRef.current?.(error instanceof Error ? error : new Error(String(error)));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -430,20 +448,47 @@ function VideoEditorScreen({
     [source, onCoverSelected, reportError, dispatch]
   );
 
-  // Scrub target in SECONDS; the Skia ColorPreviewCanvas seeks its decoder to this value in lockstep.
+  // Toggled once per drag: per-tick seeks skip parent setState and flow imperatively via player.currentTime; Skia re-sync at fade-in only.
   const [scrubSeconds, setScrubSeconds] = useState<number | null>(null);
   const scrubSeek = useMemo(
     () => (scrubSeconds != null ? { seconds: scrubSeconds } : null),
     [scrubSeconds]
   );
 
+  const lastScrubSecondsRef = useRef(0);
+  const scrubLastSeekAtRef = useRef(0);
+  const scrubTrailingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Ref + registration so ScrubFrameOverlay ticks bypass this component's render — state-routing would re-render the whole editor per tick.
+  const scrubFrameListenerRef = useRef<((timeMs: number) => void) | null>(null);
+  const registerScrubFrameListener = useCallback((cb: ((timeMs: number) => void) | null) => {
+    scrubFrameListenerRef.current = cb;
+  }, []);
+  // Keyed by source so a new video retries the fast path; on decoder-alloc/fatal we fall back to the pre-extracted overlay for the session.
+  const [scrubEngineFailure, setScrubEngineFailure] = useState<{ source: string } | null>(null);
+  const scrubEngineFailed = scrubEngineFailure?.source === source;
+  const handleScrubEngineFallback = useCallback(() => {
+    setScrubEngineFailure({ source });
+  }, [source]);
   const handleScrub = useCallback(
     (timeMs: number) => {
-      if (player.playing) player.pause();
       const seconds = timeMs / 1000;
-      // eslint-disable-next-line react-hooks/immutability -- expo-video's player exposes currentTime as its documented seek API; assignment is the intended usage.
-      player.currentTime = seconds;
-      setScrubSeconds(seconds);
+      lastScrubSecondsRef.current = seconds;
+      scrubFrameListenerRef.current?.(timeMs);
+      const now = Date.now();
+      const elapsed = now - scrubLastSeekAtRef.current;
+      if (elapsed >= SCRUB_SEEK_INTERVAL_MS) {
+        scrubLastSeekAtRef.current = now;
+        scrubPlayerTo(player, seconds);
+      } else if (scrubTrailingRef.current == null) {
+        // Trailing seek so the newest position lands when the finger slows mid-drag; otherwise the frame lags one interval.
+        scrubTrailingRef.current = setTimeout(() => {
+          scrubTrailingRef.current = null;
+          scrubLastSeekAtRef.current = Date.now();
+          scrubPlayerTo(player, lastScrubSecondsRef.current);
+        }, SCRUB_SEEK_INTERVAL_MS - elapsed);
+      }
+      // setState only on the first tick — subsequent ticks would re-render the whole editor at 60fps and stall the handle.
+      setScrubSeconds((prev) => (prev != null ? prev : seconds));
     },
     [player]
   );
@@ -451,6 +496,19 @@ function VideoEditorScreen({
   const handleScrubEnd = useCallback(() => {
     setScrubSeconds(null);
   }, []);
+
+  const isScrubbing = scrubSeconds != null;
+  useEffect(() => {
+    if (!isScrubbing) return;
+    return () => {
+      // Cancel any pending trailing seek — firing after settle would knock the frame off the released position.
+      if (scrubTrailingRef.current != null) {
+        clearTimeout(scrubTrailingRef.current);
+        scrubTrailingRef.current = null;
+      }
+      settlePlayerTo(player, lastScrubSecondsRef.current);
+    };
+  }, [isScrubbing, player]);
 
   const closeCoverPicker = useCallback(() => {
     dispatch({ type: 'setTool', tool: null });
@@ -673,8 +731,7 @@ function VideoEditorScreen({
     state.filterId !== ORIGINAL_FILTER_ID ||
     anyNonNeutral(Object.keys(NEUTRAL_ADJUSTMENTS) as PhotoAdjustmentKey[], state.adjustments) ||
     state.overlayId != null;
-  // Mounted only while the pipeline is active: useVideo's frame pump ticks at 60fps on the
-  // UI thread for as long as it's mounted (it ignores `paused`), starving panel touches.
+  // Mount only when active: useVideo's frame pump ticks at 60fps on the UI thread regardless of `paused`, starving panel touches.
   const colorPreviewMounted = info != null && videoDisplayRect.width > 0 && colorPipelineActive;
   const nativeVideoHidden = false;
   // On pause, snap the Skia decoder to the player position so the frozen graded frame matches the audio/native frame.
@@ -685,8 +742,7 @@ function VideoEditorScreen({
     return () => subscription.remove();
   }, [player]);
 
-  // Prefetched at mount so the effects panel renders in one phase; swapping a spinner for
-  // taller content mid-entering-animation left the panel's hit-test region offset from its visuals.
+  // Prefetch at mount so the effects panel renders in one phase; swapping content mid-animation offsets its hit-test region.
   const [effectsPosterUri, setEffectsPosterUri] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -700,13 +756,10 @@ function VideoEditorScreen({
     };
   }, [source]);
 
-  // Two-surface design: native VideoView is the always-visible base; Skia fades in on top only when the color pipeline is active and not scrubbing, because the Skia decoder can't reliably re-seek.
-  // Skia's decoder has no rate control, so during speeded playback the native surface shows instead.
+  // Two-surface: native VideoView base; Skia fades in only when pipeline active, not scrubbing, and speed=1 (Skia has no rate control / reliable re-seek).
   const skiaOpacityTarget =
     colorPipelineActive && scrubSeconds == null && (state.speed === 1 || !isPlaying) ? 1 : 0;
-  // Skia's useVideo pumps frames on the UI thread — the same thread that delivers touches.
-  // Keep the decoder paused while its surface is invisible, or an idle pipeline starves
-  // taps/slider drags in the tool panels; snap to the player position when it fades in.
+  // Skia's useVideo pumps frames on the UI thread (same one as touches) — pause while hidden or panels' taps starve; snap to player on fade-in.
   const skiaDecoderPaused = !isPlaying || skiaOpacityTarget === 0;
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing the external Skia decoder to the imperative player clock, not deriving state
@@ -719,7 +772,18 @@ function VideoEditorScreen({
   const skiaAnimatedStyle = useAnimatedStyle(() => ({ opacity: skiaOpacity.value }));
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    // useSafeAreaInsets() applies on first frame — native SafeAreaView re-measures after first paint on Android, causing a jump.
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: theme.colors.background,
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
+      ]}>
       <View
         style={textFocus != null ? styles.chromeHidden : null}
         pointerEvents={textFocus != null ? 'none' : 'auto'}>
@@ -773,6 +837,29 @@ function VideoEditorScreen({
               overlayPacks={overlayPacks}
             />
           </Animated.View>
+        )}
+        {Platform.OS === 'android' && info && !scrubEngineFailed && (
+          <ScrubEnginePreview
+            source={source}
+            durationMs={info.durationMs}
+            info={info}
+            crop={cropActive ? null : state.crop}
+            displayRect={videoDisplayRect}
+            visible={isScrubbing}
+            registerListener={registerScrubFrameListener}
+            onFallback={handleScrubEngineFallback}
+          />
+        )}
+        {Platform.OS === 'android' && info && scrubEngineFailed && (
+          <ScrubFrameOverlay
+            source={source}
+            durationMs={info.durationMs}
+            info={info}
+            crop={cropActive ? null : state.crop}
+            displayRect={videoDisplayRect}
+            visible={isScrubbing}
+            registerListener={registerScrubFrameListener}
+          />
         )}
         {videoDisplayRect.width > 0 && (
           <Canvas
@@ -1062,14 +1149,13 @@ function VideoEditorScreen({
           <Text style={[styles.busyLabel, { color: '#FFFFFF' }]}>{t('processing')}</Text>
         </View>
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const PANEL_ENTER_MS = 220;
 
-// Fade only, no exit: transform-based slide diverged hit-testing from visuals when panel
-// content resized mid-animation, and exit ghosts swallowed taps on the replacing panel.
+// Fade only — transform slides diverged hit-testing from visuals on resize, and exit ghosts swallowed taps on the replacing panel.
 function FloatingPanel({ children, bottom }: { children: React.ReactNode; bottom: number }) {
   return (
     <View pointerEvents="box-none" style={[styles.floatingPanelWrapper, { bottom }]}>

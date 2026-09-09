@@ -21,6 +21,7 @@ import {
 import type { PhotoOverlayId } from '../../photo/overlays';
 import type { AspectRatio } from '../../photo/state/photoEditorState';
 import type { CropRect } from '../../types';
+import { clamp } from '../format';
 
 /** Every toolbar tab id the VideoEditor understands. */
 export type VideoToolId =
@@ -343,10 +344,6 @@ function pushCheckpoint(state: VideoEditorState): VideoEditorState {
     past: [...trimmed, current],
     future: [],
   };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 export interface VideoEditorController {

@@ -10,12 +10,9 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+// Reanimated 4 deprecates its `runOnJS` re-export; use `scheduleOnRN` from react-native-worklets (uncurried).
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { EmojiStickerGlyph } from './PhotoRender';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
@@ -202,13 +199,11 @@ function DraggableLayer({
 }: DraggableLayerProps) {
   const theme = useEditorTheme();
 
-  // Live center in view px — UI-thread single source of truth. Gestures write it directly; on release
-  // we commit the normalized value without any reset, so there's no reducer-round-trip flicker.
+  // Live center in view px — UI-thread SoT; commit the normalized value on release with no reset, dodging reducer round-trip flicker.
   const centerXPx = useSharedValue(displayRect.x + layer.x * displayRect.width);
   const centerYPx = useSharedValue(displayRect.y + layer.y * displayRect.height);
 
-  // Last-committed normalized values + cached rect: lets the sync effect distinguish
-  // "reducer echoed our commit" (skip) from "container resized" (re-project).
+  // Last-committed normalized + cached rect so the sync effect distinguishes "reducer echoed our commit" from "container resized".
   const lastCommittedX = useSharedValue(layer.x);
   const lastCommittedY = useSharedValue(layer.y);
   const lastRectX = useSharedValue(displayRect.x);
@@ -290,9 +285,9 @@ function DraggableLayer({
       .maxDistance(8)
       .onEnd(() => {
         if (wasSelected && onActivate) {
-          runOnJS(onActivate)(layer);
+          scheduleOnRN(onActivate, layer);
         } else {
-          runOnJS(onSelect)(layer.id);
+          scheduleOnRN(onSelect, layer.id);
         }
       });
 
@@ -303,7 +298,7 @@ function DraggableLayer({
         panStartY.value = centerYPx.value;
         rawTranslateX.value = 0;
         rawTranslateY.value = 0;
-        runOnJS(onSelect)(layer.id);
+        scheduleOnRN(onSelect, layer.id);
       })
       .onChange((e) => {
         rawTranslateX.value += e.changeX;
@@ -340,7 +335,7 @@ function DraggableLayer({
         const ny = clamp01((centerYPx.value - rectY) / rectH);
         lastCommittedX.value = nx;
         lastCommittedY.value = ny;
-        runOnJS(commit)(centerXPx.value, centerYPx.value, scale.value, rotation.value);
+        scheduleOnRN(commit, centerXPx.value, centerYPx.value, scale.value, rotation.value);
       });
 
     const pinch = Gesture.Pinch()
@@ -356,7 +351,7 @@ function DraggableLayer({
         const ny = clamp01((centerYPx.value - rectY) / rectH);
         lastCommittedX.value = nx;
         lastCommittedY.value = ny;
-        runOnJS(commit)(centerXPx.value, centerYPx.value, scale.value, rotation.value);
+        scheduleOnRN(commit, centerXPx.value, centerYPx.value, scale.value, rotation.value);
       });
 
     const rotate = Gesture.Rotation()
@@ -378,7 +373,7 @@ function DraggableLayer({
         const ny = clamp01((centerYPx.value - rectY) / rectH);
         lastCommittedX.value = nx;
         lastCommittedY.value = ny;
-        runOnJS(commit)(centerXPx.value, centerYPx.value, scale.value, rotation.value);
+        scheduleOnRN(commit, centerXPx.value, centerYPx.value, scale.value, rotation.value);
       });
 
     return Gesture.Simultaneous(tap, pan, pinch, rotate);
@@ -408,8 +403,7 @@ function DraggableLayer({
     showHorizontalGuide,
   ]);
 
-  // Shell owns absolute scale; content lays out at constant size. Sizing via Fabric commits
-  // instead would race the worklet transform and flash one frame double-scaled.
+  // Shell owns scale; content lays out at constant size. Sizing via Fabric would race the worklet transform and flash double-scaled.
   const animatedStyle = useAnimatedStyle(() => ({
     left: centerXPx.value - measuredW.value / 2,
     top: centerYPx.value - measuredH.value / 2,
@@ -517,8 +511,7 @@ function LayerContent({
   }
 }
 
-// Cap on the emoji raster canvas — beyond this the View transform upscales the fixed raster;
-// Apple Color Emoji is a bitmap strike anyway so re-rasterizing larger adds no detail.
+// Cap the emoji raster; Apple Color Emoji is a bitmap strike so larger raster adds no detail — the View transform upscales.
 const EMOJI_CANVAS_MAX_SIZE = 320;
 
 function StickerLayerContent({
@@ -533,8 +526,7 @@ function StickerLayerContent({
   // Constant box; shell's animated transform is the sole scale authority (race-free invariant).
   const size = baseStickerSize;
   if (layer.content.variant === 'emoji') {
-    // Same EmojiStickerGlyph as export — RN <Text> clips/shifts Apple Color Emoji.
-    // Rasterized at LAYER_SCALE_MAX so the shell's transform can upscale losslessly.
+    // Same EmojiStickerGlyph as export (RN <Text> clips Apple Color Emoji); rasterize at LAYER_SCALE_MAX for lossless shell upscale.
     const canvasSize = Math.min(baseStickerSize * LAYER_SCALE_MAX, EMOJI_CANVAS_MAX_SIZE);
     const inset = (size - canvasSize) / 2;
     return (
@@ -590,8 +582,7 @@ function toRNImageSource(source: unknown): { uri: string } | number | null {
 // Screen-overflow guard only; normal content is already pre-broken.
 const TEXT_OVERFLOW_SAFETY_FRACTION = 0.95;
 
-// Renders at scale-1 reference size (shell transform applies layer.scale) — pre-broken via
-// breakTextIntoLines so RN Text and Skia agree on line breaks. textShadow dropped when a pill is present.
+// Scale-1 (shell applies layer.scale); pre-broken via breakTextIntoLines so RN and Skia agree on breaks; textShadow drops with a pill.
 function TextLayerContent({
   layer,
   baseFontSize,
@@ -650,6 +641,8 @@ function TextLayerContent({
     fontSize,
     // lineHeight = fontSize matches Skia's em-box so multi-line heights align preview↔export.
     lineHeight: fontSize,
+    // Android font padding overflows the exact em-box line height and clips ascenders; no-op on iOS.
+    includeFontPadding: false as const,
     fontFamily,
     fontWeight: layer.bold ? ('700' as const) : ('400' as const),
     fontStyle: layer.italic ? ('italic' as const) : ('normal' as const),

@@ -7,8 +7,12 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import androidx.media3.common.C
 import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
+import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
 import androidx.media3.effect.Crop
@@ -16,7 +20,6 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.SingleColorLut
-import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
@@ -63,18 +66,21 @@ object VideoTrimmer {
       .build()
 
     val compression = options.compression
+    val speedFactor = normalizeSpeed(options.speedFactor)
     val editedMediaItem = EditedMediaItem.Builder(mediaItem)
       .apply {
         // buildEffects always emits a Presentation when compression is set, so this suffices.
         if (effects.isNotEmpty()) {
           setEffects(Effects(emptyList(), effects))
         }
+        // setSpeed retimes BOTH tracks; a video-only SpeedChangeEffect left audio at 1x (desync).
+        if (speedFactor != null) {
+          setSpeed(constantSpeedProvider(speedFactor))
+        }
       }
       .build()
-
-    val speedFactor = normalizeSpeed(options.speedFactor)
     val outputDurationMs = if (speedFactor != null) {
-      // SpeedChangeEffect scales the composition by 1/speedFactor; match for the JS caller.
+      // setSpeed scales the output by 1/speedFactor; match for the JS caller.
       ((options.endMs - options.startMs) / speedFactor).roundToInt().toLong()
     } else {
       (options.endMs - options.startMs).toLong()
@@ -123,11 +129,7 @@ object VideoTrimmer {
     }
   }
 
-  /**
-   * Effects order: color (matrix+LUT) → speed → crop → maxDimension → overlay. Matches the live
-   * preview seam so overlays land on the color-graded, cropped, resized frame. Empty chain keeps
-   * pure trims passthrough (unless `compression` forces the encoder path in the caller).
-   */
+  /** Order color→crop→maxDim→overlay to match the live preview; speed is set on EditedMediaItem (build() rejects speed effects here). Empty chain keeps pure trims passthrough. */
   private fun buildEffects(context: Context, uri: String, options: TrimOptions): List<Effect> {
     val out = mutableListOf<Effect>()
 
@@ -139,15 +141,9 @@ object VideoTrimmer {
       buildLutEffect(context, lutUri)?.let { out.add(it) }
     }
 
-    normalizeSpeed(options.speedFactor)?.let { speed ->
-      out.add(SpeedChangeEffect(speed.toFloat()))
-    }
-
     options.crop?.let { out.add(buildCropEffect(context, uri, it)) }
 
-    // Presentation must land AFTER Crop so maxDimension caps the CROPPED frame, not the source.
-    // When compression is set but the cap doesn't shrink the frame, we still emit a Presentation
-    // at the resolved (even-clamped) output size — this reliably forces re-encode on Media3.
+    // Presentation lands AFTER Crop so maxDimension caps the cropped frame; emitting one at even-clamped size reliably forces re-encode on Media3.
     if (options.compression != null) {
       val (outW, outH) = resolveCompressionOutputSize(context, uri, options)
       if (outW > 0 && outH > 0) {
@@ -223,23 +219,34 @@ object VideoTrimmer {
     return max(floorBps, bps.toInt())
   }
 
+  // Use playback fps, not CAPTURE_FRAMERATE — slo-mo reports 120/240 and inflates the bitrate heuristic.
   private fun readFrameRate(context: Context, uri: String): Double {
-    val retriever = MediaMetadataRetriever()
+    val extractor = MediaExtractor()
     try {
-      retriever.setSource(context, uri)
-      val fps = retriever.extractMetadata(
-        MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
-      )?.toDoubleOrNull() ?: 0.0
-      return fps
+      val parsed = Uri.parse(uri)
+      if (parsed.scheme == null) {
+        extractor.setDataSource(uri)
+      } else {
+        extractor.setDataSource(context, parsed, null)
+      }
+      for (i in 0 until extractor.trackCount) {
+        val format = extractor.getTrackFormat(i)
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+        if (!mime.startsWith("video/")) continue
+        if (!format.containsKey(MediaFormat.KEY_FRAME_RATE)) return 0.0
+        return runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toDouble() }
+          .recoverCatching { format.getFloat(MediaFormat.KEY_FRAME_RATE).toDouble() }
+          .getOrDefault(0.0)
+      }
+      return 0.0
+    } catch (_: Throwable) {
+      return 0.0
     } finally {
-      retriever.release()
+      extractor.release()
     }
   }
 
-  /**
-   * Skia 4×5 row-major → Media3 RgbMatrix 4×4 column-major. Alpha row dropped (RgbMatrix is RGB-only);
-   * bias collapses into col3 so `M * vec4(rgb, 1)` = `M_3x3 * rgb + bias`.
-   */
+  /** Skia 4×5 row-major → Media3 RgbMatrix 4×4 column-major; alpha row dropped, bias collapses into col3. */
   private fun buildRgbMatrixEffect(m: List<Double>): RgbMatrix? {
     if (m.size != 20) return null
     val gl = FloatArray(16)
@@ -250,10 +257,7 @@ object VideoTrimmer {
     return RgbMatrix { _, _ -> gl }
   }
 
-  /**
-   * Build a Media3 SingleColorLut from a HALD PNG. `SingleColorLut` has no intensity mix on Android,
-   * so fractional-intensity LUTs degrade to full strength (platform limitation).
-   */
+  /** HALD PNG → Media3 SingleColorLut; Android has no intensity mix so fractional LUTs degrade to full strength. */
   private fun buildLutEffect(context: Context, lutUri: String): SingleColorLut? {
     val bitmap = decodeBitmap(context, lutUri) ?: return null
     return try {
@@ -263,13 +267,17 @@ object VideoTrimmer {
     }
   }
 
-  /**
-   * Clamp to [0.5, 2.0]; null near 1.0 short-circuits the shader (SpeedChangeEffect(1.0) still runs it).
-   */
+  /** Clamp to [0.5, 2.0]; null near 1.0 skips the speed pipeline entirely. */
   private fun normalizeSpeed(value: Double): Double? {
     val clamped = value.coerceIn(0.5, 2.0)
     if (kotlin.math.abs(clamped - 1.0) < 1e-4) return null
     return clamped
+  }
+
+  private fun constantSpeedProvider(speed: Double): SpeedProvider = object : SpeedProvider {
+    override fun getSpeed(timeUs: Long): Float = speed.toFloat()
+
+    override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
   }
 
   // Media3 Crop takes NDC [-1,1] centered; convert from display-pixel top-left with Y inverted.
@@ -294,9 +302,7 @@ object VideoTrimmer {
     return Crop(left, right, bottom, top)
   }
 
-  /**
-   * Build a Media3 OverlayEffect from a static PNG; nil skips the stage (unreadable overlay is non-fatal).
-   */
+  /** Build a Media3 OverlayEffect from a static PNG; nil skips the stage (unreadable overlay is non-fatal). */
   private fun buildOverlayEffect(context: Context, overlayUri: String): OverlayEffect? {
     val bitmap = decodeBitmap(context, overlayUri) ?: return null
     val overlay = BitmapOverlay.createStaticBitmapOverlay(bitmap)

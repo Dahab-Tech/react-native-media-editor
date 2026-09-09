@@ -9,10 +9,9 @@ import {
   rect as skRect,
   RuntimeShader,
   useImage,
-  useVideo,
 } from '@shopify/react-native-skia';
 import React, { useEffect, useMemo } from 'react';
-import { LogBox, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 
 import {
@@ -38,18 +37,8 @@ import {
   type PhotoOverlayPack,
 } from '../../photo/overlays';
 import type { CropRect } from '../../types';
+import { useVideoPreviewFrames } from '../hooks/useVideoPreviewFrames';
 
-// Suppresses Skia useVideo's Reanimated `.value`-during-render warning (library bug, no userland fix); needs both LogBox and console.warn.
-LogBox.ignoreLogs([/Reading from `value` during component render/]);
-if (__DEV__) {
-  const originalWarn = console.warn;
-  const suppressPattern = /Reading from `value` during component render/;
-  console.warn = (...args: unknown[]) => {
-    const first = args[0];
-    if (typeof first === 'string' && suppressPattern.test(first)) return;
-    originalWarn(...args);
-  };
-}
 export interface ColorPreviewCanvasProps {
   /** Video source URI. */
   source: string;
@@ -91,25 +80,20 @@ export function ColorPreviewCanvas({
   filterPacks,
   overlayPacks,
 }: ColorPreviewCanvasProps) {
-  // useVideo seeds shared values ONCE via useSharedValue initializers; prop changes must go through useEffect writes.
   const pausedSv = useSharedValue(paused);
   const seekSv = useSharedValue<number | null>(null);
-  const loopingSv = useSharedValue(true);
-  const volumeSv = useSharedValue(0); // Muted — primary player owns audio.
   useEffect(() => {
     pausedSv.value = paused;
   }, [paused, pausedSv]);
-  const { currentFrame, rotation, size, duration } = useVideo(source, {
+  const { currentFrame, rotation, size, duration } = useVideoPreviewFrames(source, {
     paused: pausedSv,
     seek: seekSv,
-    looping: loopingSv,
-    volume: volumeSv,
   });
 
-  // useVideo silently drops seeks issued before the decoder loads; the ready dep re-applies the last one.
+  // Seeks issued before the decoder loads are dropped natively; the ready dep re-applies the last one.
   const decoderReady = duration > 0;
   useEffect(() => {
-    if (seek != null && decoderReady) seekSv.value = seek.seconds;
+    if (seek != null && decoderReady) seekSv.value = seek.seconds * 1000; // Skia.Video.seek takes ms.
   }, [seek, seekSv, decoderReady]);
 
   const filterDefinition = useMemo(
@@ -177,8 +161,7 @@ export function ColorPreviewCanvas({
 
   const layerActive = !matrixIsIdentity || runtimeEffect != null || lutImageFilter != null;
 
-  // useVideo emits unrotated coded frames; fitbox maps them onto the display-oriented fit rect,
-  // applying the container rotation (fill is exact: dst aspect already equals post-rotation aspect).
+  // useVideo emits unrotated coded frames; fitbox maps them onto the display-oriented fit rect (fill exact — dst aspect already matches post-rotation).
   const frameTransform = useMemo(() => {
     if (size.width <= 0 || size.height <= 0 || fit.width <= 0 || fit.height <= 0) return [];
     return fitbox(

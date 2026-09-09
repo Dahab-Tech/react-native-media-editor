@@ -110,8 +110,7 @@ export const INITIAL_STATE: PhotoEditorState = {
 
 export type PhotoEditorAction =
   | { type: 'setTool'; tool: PhotoToolId | null }
-  // Continuous crop commit. When straighten !== 0, `imageAspect` (pre-rotation) is used to clamp so a
-  // frame resize at θ ≠ 0 cannot commit a crop the rotated image doesn't fully cover.
+  // Continuous crop commit; at straighten≠0, `imageAspect` (pre-rotation) clamps so frame resize can't commit a crop the rotated image doesn't cover.
   | { type: 'setCrop'; crop: NormalizedCrop; imageAspect?: number }
   | { type: 'setAspect'; aspect: AspectRatio }
   // Lock crop to `aspect` and re-fit WITHOUT creating a history entry (initial-mount lock only).
@@ -122,8 +121,7 @@ export type PhotoEditorAction =
   | { type: 'setStraighten'; value: number; imageAspect: number }
   // Reset crop / rotation / flip / straighten. With aspect+imageAspect, refits to the constraint.
   | { type: 'resetCrop'; aspect?: AspectRatio; imageAspect?: number }
-  // Cancel path for crop mode: restore geometry fields to a pre-entry snapshot, no history entry.
-  // `pastLength` truncates checkpoints pushed during the session so undo can't resurrect drafts.
+  // Crop-mode cancel: restore geometry to a pre-entry snapshot; `pastLength` truncates in-session checkpoints so undo can't resurrect drafts.
   | {
       type: 'restoreCropState';
       crop: NormalizedCrop;
@@ -232,8 +230,7 @@ function applyAction(state: PhotoEditorState, action: PhotoEditorAction): PhotoE
         straighten: action.straighten,
       };
     case 'setCrop': {
-      // fitCropForAngle is translate-first (only shrink when the bbox can't fit at any position);
-      // setStraighten uses clampCropForAngle (shrink-about-center) to preserve the user's chosen center.
+      // fitCropForAngle is translate-first (shrink only when the bbox can't fit anywhere); setStraighten uses clampCropForAngle to preserve center.
       const angleClamped =
         action.imageAspect != null && action.imageAspect > 0 && state.straighten !== 0
           ? fitCropForAngle(action.crop, action.imageAspect, state.straighten)
@@ -470,8 +467,7 @@ function clampCrop(crop: NormalizedCrop): NormalizedCrop {
   return { x, y, width, height };
 }
 
-/** Largest rect of the target pixel aspect that fits [0..1]², centered on the current crop.
- *  `pixelAspect` is in stored (pre-rotation) space; callers convert seen ratios first. */
+/** Largest rect of target pixel aspect fitting [0..1]², centered on current crop; `pixelAspect` is pre-rotation. */
 export function fitCropToAspect(
   current: NormalizedCrop,
   pixelAspect: number,

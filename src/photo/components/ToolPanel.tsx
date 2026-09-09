@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, View, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, {
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+// Reanimated 4 deprecates its `runOnJS` re-export; use `scheduleOnRN` from react-native-worklets (uncurried).
+import { scheduleOnRN } from 'react-native-worklets';
 
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
@@ -61,7 +58,7 @@ export function ToolPanel({
         const past = h > 0 && translateY.value > h * DISMISS_TRAVEL_FRACTION;
         const flick = e.velocityY > DISMISS_FLICK_VELOCITY;
         if (past || flick) {
-          runOnJS(onDismiss)();
+          scheduleOnRN(onDismiss);
         } else {
           translateY.value = withTiming(0, { duration: SPRING_BACK_MS });
         }
@@ -117,7 +114,7 @@ export function CollapsedPanelStrip({ onReveal, onLayoutHeight }: CollapsedPanel
       .activeOffsetY(-REVEAL_SWIPE_THRESHOLD)
       .failOffsetX([-20, 20])
       .onStart(() => {
-        runOnJS(onReveal)();
+        scheduleOnRN(onReveal);
       })
   );
 

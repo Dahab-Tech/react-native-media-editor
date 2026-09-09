@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
+import { createRafCoalescer } from '../../core/hooks/rafCoalescer';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
 
@@ -48,6 +49,8 @@ export function Slider({
   });
 
   const dragOriginValue = useRef(0);
+  // Coalesce Move dispatches to one per frame — Android touch outpaces render and each dispatch rebuilds the Skia LUT filter.
+  const coalescer = useRef(createRafCoalescer());
 
   // eslint-disable-next-line react-hooks/refs -- refs are only read inside gesture callbacks, never during render
   const [responder] = useState(() =>
@@ -67,10 +70,21 @@ export function Slider({
         const signedDx = s.isRTL ? -gesture.dx : gesture.dx;
         const deltaValue = (signedDx / usable) * (s.max - s.min);
         const next = clamp(dragOriginValue.current + deltaValue, s.min, s.max);
-        s.onChange(next);
+        coalescer.current.schedule(() => latest.current.onChange(next));
+      },
+      onPanResponderRelease: () => {
+        coalescer.current.flush();
+      },
+      onPanResponderTerminate: () => {
+        coalescer.current.flush();
       },
     })
   );
+
+  useEffect(() => {
+    const c = coalescer.current;
+    return () => c.cancel();
+  }, []);
 
   const handleLayout = (event: LayoutChangeEvent) => {
     setTrackWidth(event.nativeEvent.layout.width);

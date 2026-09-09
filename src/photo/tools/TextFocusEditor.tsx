@@ -2,7 +2,6 @@ import React, { useMemo, useRef, useState } from 'react';
 import {
   Keyboard,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -250,9 +249,10 @@ export function TextFocusEditor({
         </Pressable>
       </View>
 
-      <KeyboardAvoidingView
-        style={styles.body}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      {/* 'padding' on Android too: edge-to-edge (Expo 53+) stops the window from resizing
+          for the keyboard, which left the dock buried under it. KAV pads only by the
+          keyboard/frame OVERLAP, so legacy adjustResize apps don't double-shift. */}
+      <KeyboardAvoidingView style={styles.body} behavior="padding">
         <View style={styles.inputCenter} pointerEvents="box-none">
           <View style={styles.inputBubble}>
             <FocusTextInputWithPill
@@ -614,7 +614,7 @@ function FocusTextInputWithPill({
   const padV = editorFontSize * TEXT_PILL_VERTICAL_PADDING_RATIO;
   const pillRadius = editorFontSize * TEXT_PILL_RADIUS_RATIO;
 
-  // Shared with the pill's measurement mirror; both must shape at identical widths.
+  // Shared with the pill's measurement mirror (identical widths); alignSelf:stretch locks the input's width — Android reflows one char/frame otherwise.
   const textStyle = {
     color: draft.color,
     fontFamily: previewFontFamily,
@@ -622,8 +622,10 @@ function FocusTextInputWithPill({
     fontStyle: draft.italic ? ('italic' as const) : ('normal' as const),
     fontSize: editorFontSize,
     lineHeight: 44,
+    padding: 0,
+    includeFontPadding: false,
     textAlign: draft.align,
-    minWidth: 32,
+    alignSelf: 'stretch' as const,
     textShadowColor: hasBackground ? 'transparent' : 'rgba(0,0,0,0.5)',
     textShadowRadius: hasBackground ? 0 : 3,
   };
@@ -634,7 +636,9 @@ function FocusTextInputWithPill({
       autoFocus
       multiline
       showSoftInputOnFocus
-      blurOnSubmit={false}
+      submitBehavior="newline"
+      allowFontScaling={false}
+      textBreakStrategy="highQuality"
       value={draft.text}
       onChangeText={onChangeText}
       placeholder={placeholder}
@@ -702,7 +706,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   inputBubble: {
-    maxWidth: '85%',
+    width: '85%',
   },
   dock: {},
   toolbarSpacer: {

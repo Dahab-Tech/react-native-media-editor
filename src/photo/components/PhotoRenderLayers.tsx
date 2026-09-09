@@ -256,8 +256,7 @@ function TextGlyph({
         ? centerX + longestLine / 2 - RENDER_BOX_WIDTH
         : centerX - RENDER_BOX_WIDTH / 2;
 
-  // IG-style per-line pills: adjacent pills overlap by 2*padV so uniformly-rounded corners hide inside
-  // the overlap and the chain reads as one merged shape. Cumulative line heights avoid ascent-sign drift.
+  // IG-style per-line pills: adjacent pills overlap by 2*padV so uniform corners hide in the overlap; cumulative line heights avoid ascent-sign drift.
   const backgroundRects = useMemo(() => {
     if (item.background == null) return null;
     const metrics = paragraph.getLineMetrics();

@@ -9,6 +9,7 @@ import {
   type TrimResult,
 } from '@dahab-tech/react-native-media-editor/videoEditor';
 import * as ImagePicker from 'expo-image-picker';
+import * as SplashScreen from 'expo-splash-screen';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEffect, useState } from 'react';
 import {
@@ -22,7 +23,11 @@ import {
   Text,
   View,
 } from 'react-native';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import {
+  initialWindowMetrics,
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 
 import { ConfigPanel } from './ConfigPanel';
 import {
@@ -39,7 +44,20 @@ type Screen =
   | { kind: 'photo'; uri: string }
   | { kind: 'photoMulti'; assets: readonly { uri: string }[] };
 
+// Wraps ALL screens so the SDK shares these insets; initialMetrics fixes them on frame 1 (Fabric otherwise dispatches async).
 export default function App() {
+  return (
+    <SafeAreaProvider
+      initialMetrics={initialWindowMetrics}
+      onLayout={() => SplashScreen.hideAsync()}>
+      <Playground />
+    </SafeAreaProvider>
+  );
+}
+
+function Playground() {
+  // useSafeAreaInsets, not native SafeAreaView — the native view re-measures after first paint on Android and flashes under the status bar.
+  const insets = useSafeAreaInsets();
   const [screen, setScreen] = useState<Screen>({ kind: 'home' });
   const [config, setConfig] = useState<PlaygroundConfig>(DEFAULT_CONFIG);
   const [trimResult, setTrimResult] = useState<TrimResult | null>(null);
@@ -122,69 +140,69 @@ export default function App() {
   }
 
   return (
-    <SafeAreaProvider>
-      <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            keyboardShouldPersistTaps="handled">
-            <View style={styles.titleRow}>
-              <Text style={styles.title}>@dahab-tech/react-native-media-editor</Text>
-              <Pressable
-                style={styles.localeToggle}
-                onPress={() =>
-                  setConfig({ ...config, locale: config.locale === 'en' ? 'ar' : 'en' })
-                }
-                accessibilityRole="button"
-                accessibilityLabel={`Locale: ${config.locale === 'en' ? 'English' : 'Arabic'}. Tap to switch.`}>
-                <Text
-                  style={[
-                    styles.localeSegment,
-                    config.locale === 'en' && styles.localeSegmentActive,
-                  ]}>
-                  EN
-                </Text>
-                <Text
-                  style={[
-                    styles.localeSegment,
-                    config.locale === 'ar' && styles.localeSegmentActive,
-                  ]}>
-                  عربي
-                </Text>
-              </Pressable>
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top, paddingLeft: insets.left, paddingRight: insets.right },
+      ]}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled">
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>@dahab-tech/react-native-media-editor</Text>
+            <Pressable
+              style={styles.localeToggle}
+              onPress={() => setConfig({ ...config, locale: config.locale === 'en' ? 'ar' : 'en' })}
+              accessibilityRole="button"
+              accessibilityLabel={`Locale: ${config.locale === 'en' ? 'English' : 'Arabic'}. Tap to switch.`}>
+              <Text
+                style={[
+                  styles.localeSegment,
+                  config.locale === 'en' && styles.localeSegmentActive,
+                ]}>
+                EN
+              </Text>
+              <Text
+                style={[
+                  styles.localeSegment,
+                  config.locale === 'ar' && styles.localeSegmentActive,
+                ]}>
+                عربي
+              </Text>
+            </Pressable>
+          </View>
+
+          <ConfigPanel config={config} onChange={setConfig} />
+
+          {trimResult && <TrimResultPanel key={trimResult.uri} result={trimResult} />}
+
+          {cover && (
+            <View style={styles.result}>
+              <Text style={styles.resultTitle}>Selected cover</Text>
+              <Image
+                source={{ uri: cover.uri }}
+                style={[styles.mediaPreview, { aspectRatio: cover.width / cover.height }]}
+                resizeMode="contain"
+              />
             </View>
+          )}
 
-            <ConfigPanel config={config} onChange={setConfig} />
+          {photo && <PhotoResultPanel result={photo} />}
+        </ScrollView>
 
-            {trimResult && <TrimResultPanel key={trimResult.uri} result={trimResult} />}
-
-            {cover && (
-              <View style={styles.result}>
-                <Text style={styles.resultTitle}>Selected cover</Text>
-                <Image
-                  source={{ uri: cover.uri }}
-                  style={[styles.mediaPreview, { aspectRatio: cover.width / cover.height }]}
-                  resizeMode="contain"
-                />
-              </View>
-            )}
-
-            {photo && <PhotoResultPanel result={photo} />}
-          </ScrollView>
-
-          <SafeAreaView edges={['bottom']} style={styles.bottomBar}>
-            <Pressable style={styles.button} onPress={() => pickMedia('video')}>
-              <Text style={styles.buttonText}>Open Video Editor</Text>
-            </Pressable>
-            <Pressable style={styles.button} onPress={() => pickMedia('photo')}>
-              <Text style={styles.buttonText}>Open Photo Editor</Text>
-            </Pressable>
-          </SafeAreaView>
-        </KeyboardAvoidingView>
-      </SafeAreaView>
-    </SafeAreaProvider>
+        <View style={[styles.bottomBar, { paddingBottom: 8 + insets.bottom }]}>
+          <Pressable style={styles.button} onPress={() => pickMedia('video')}>
+            <Text style={styles.buttonText}>Open Video Editor</Text>
+          </Pressable>
+          <Pressable style={styles.button} onPress={() => pickMedia('photo')}>
+            <Text style={styles.buttonText}>Open Photo Editor</Text>
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -318,6 +336,7 @@ const styles = StyleSheet.create({
   bottomBar: {
     paddingHorizontal: 20,
     paddingTop: 12,
+    paddingBottom: 8,
     gap: 10,
     backgroundColor: '#0E0E11',
     borderTopWidth: StyleSheet.hairlineWidth,

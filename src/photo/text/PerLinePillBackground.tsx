@@ -3,8 +3,7 @@ import { StyleSheet, Text, View, type TextLayoutEvent, type TextStyle } from 're
 
 import type { TextAlign } from '../layers';
 
-/** Per-line pill backgrounds; pills overlap by 2*padV to hide the rounded corners
- *  (requires paddingVertical >= borderRadius). Measures via a hidden <Text> mirror. */
+/** Per-line pill backgrounds overlapping by 2*padV so rounded corners hide (needs paddingVertical>=borderRadius); measures via a hidden <Text> mirror. */
 
 export interface PerLinePillBackgroundProps {
   text: string;
@@ -72,14 +71,6 @@ export function PerLinePillBackground({
         paddingVertical,
         ...(maxWidth != null ? { maxWidth } : null),
       }}>
-      {/* opacity:0 (not display:none) so RN still fires onTextLayout. */}
-      <Text
-        allowFontScaling={false}
-        onTextLayout={handleTextLayout}
-        style={[textStyle, styles.mirror, { textAlign: align }]}>
-        {text}
-      </Text>
-
       {lines.length > 0 && (
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
           {lines.map((line, i) => (
@@ -99,22 +90,34 @@ export function PerLinePillBackground({
         </View>
       )}
 
-      <View
-        style={{
-          position: 'absolute',
-          left: paddingHorizontal,
-          top: paddingVertical,
-          right: paddingHorizontal,
-          bottom: paddingVertical,
-        }}>
-        {children}
-      </View>
+      {/* Children (visible Text or TextInput) drive container width in flow;
+          the mirror overlays them for measurement so the input's width isn't
+          gated on the mirror's onTextLayout landing a frame later. */}
+      {children}
+
+      <Text
+        allowFontScaling={false}
+        onTextLayout={handleTextLayout}
+        pointerEvents="none"
+        style={[
+          textStyle,
+          styles.mirror,
+          {
+            textAlign: align,
+            position: 'absolute',
+            left: paddingHorizontal,
+            top: paddingVertical,
+            right: paddingHorizontal,
+            bottom: paddingVertical,
+          },
+        ]}>
+        {text}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  // Kept in flow (opacity:0) so its height contributes to the container measurement.
   mirror: {
     opacity: 0,
   },

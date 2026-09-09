@@ -3,8 +3,7 @@ import { useMemo } from 'react';
 
 import { resolveImageSticker, type PhotoLayer, type PhotoStickerPack } from '../layers';
 
-/** Resolves image/uri stickers into a `${packId}::${stickerId}` → SkImage map.
- *  Rules-of-hooks require a fixed slot count, so MAX_UNIQUE fixed useImage slots. */
+/** Resolves image/uri stickers into a `${packId}::${stickerId}` → SkImage map; rules-of-hooks force MAX_UNIQUE fixed useImage slots. */
 
 const MAX_UNIQUE = 32;
 
