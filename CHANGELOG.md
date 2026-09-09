@@ -2,6 +2,10 @@
 
 All notable changes to `@dahab-tech/react-native-media-editor` follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and semver.
 
+## [0.3.1] — 2026-09-09
+### Added
+- Expo config plugin: raises `android.minSdkVersion` to 26, required by `VideoEditor` (Skia's video decoder throws below 26). `npx expo install` adds it to `app.json` automatically; raise-only — never lowers a higher value — and photo-only apps can skip it.
+
 ## [0.3.0] — 2026-09-09
 ### Changed
 - Peer floor raised: `react-native-reanimated` is now `>=4.1.0` and `react-native-worklets` is a new peer (`>=0.5.0`, optional in `peerDependenciesMeta` to mirror Reanimated). Reanimated 4 moved the worklet-core APIs (`runOnJS`, `runOnUI`, `createWorkletRuntime`, `runOnRuntime`, `WorkletRuntime`) into `react-native-worklets` and deprecated its own re-exports (removal slated for v5), so the SDK imports them from `react-native-worklets` directly — `scheduleOnRN` / `scheduleOnUI` plus curried `runOnRuntime` (its `scheduleOnRuntime` replacement needs worklets 0.6, which would exclude Expo 54's 0.5.x pin). Floors are the oldest pairing that ships every API used: Reanimated 4.0 pairs with worklets 0.4.x, which predates `scheduleOnRN`. Expo SDK 54+ templates install both peers by default.

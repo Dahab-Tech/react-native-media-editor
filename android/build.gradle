@@ -4,13 +4,13 @@ plugins {
 }
 
 group = 'com.dahabtech.mediaeditor'
-version = '0.3.0'
+version = '0.3.1'
 
 android {
   namespace "com.dahabtech.mediaeditor"
   defaultConfig {
     versionCode 1
-    versionName "0.3.0"
+    versionName "0.3.1"
   }
   lintOptions {
     abortOnError false

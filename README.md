@@ -15,7 +15,7 @@ The **React Native photo & video editor SDK** for Expo — customizable, RTL-fir
 npx expo install @dahab-tech/react-native-media-editor
 ```
 
-That's it — no config plugin required. Autolinking picks up the native module.
+Autolinking picks up the native module, and `expo install` auto-adds the SDK's config plugin to your `app.json` (only matters for `VideoEditor` on Android — see below).
 
 Requires a development build (Expo Go is not supported because the package contains native code):
 
@@ -33,7 +33,17 @@ Only install what you use:
 | `VideoEditor` component | `npx expo install @shopify/react-native-skia expo-video react-native-reanimated react-native-worklets react-native-gesture-handler react-native-safe-area-context @expo/vector-icons expo-font` |
 | Functional video API (`trimVideo`, `getVideoThumbnail`, `getVideoInfo`) | none |
 
-Both editors need `@shopify/react-native-skia` — the video editor renders its effects preview and text/sticker overlays with Skia too. Both editors also require `react-native-reanimated` **v4 or later** with `react-native-worklets` alongside it (Reanimated 4 moved the worklet-core APIs out into `react-native-worklets`); Expo SDK 54+ templates install both by default. On Android, `VideoEditor` requires `minSdkVersion` 26+ (Skia's video decoder is compiled against your app's minSdk and throws below 26 — on every device, regardless of OS version). With Expo, set it via [`expo-build-properties`](https://docs.expo.dev/versions/latest/sdk/build-properties/): `"android": { "minSdkVersion": 26 }`. The default Expo (expo-router) template already includes `react-native-reanimated`, `react-native-worklets`, `react-native-gesture-handler`, `react-native-safe-area-context`, `@expo/vector-icons`, and `expo-font` — in that case only `@shopify/react-native-skia` and/or `expo-video` are new. If Metro fails with `Unable to resolve module <package>`, that peer is missing: run the matching install line above and rebuild your development build.
+Both editors need `@shopify/react-native-skia` (the video editor renders its effects preview and overlays with Skia too) and `react-native-reanimated` **v4+** with `react-native-worklets`. On Android, `VideoEditor` requires `minSdkVersion` 26+ — Skia's video decoder throws below 26 on every device. The SDK's config plugin raises it for you; `npx expo install` adds it automatically, or add it yourself:
+
+```json
+{
+  "expo": {
+    "plugins": ["@dahab-tech/react-native-media-editor"]
+  }
+}
+```
+
+The plugin is raise-only — it never lowers a `minSdkVersion` you've set higher — and photo-only apps can skip it. Bare React Native projects set `android.minSdkVersion=26` in `android/gradle.properties` manually. The default Expo template already ships most peers, so usually only `@shopify/react-native-skia` and/or `expo-video` are new. A Metro `Unable to resolve module <package>` error means that peer is missing: install it and rebuild your development build.
 
 ## Usage
 
