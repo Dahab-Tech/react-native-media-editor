@@ -6,6 +6,7 @@ import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontal
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import type { MediaEditorStrings } from '../../core/i18n/strings';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
 import { Slider } from '../components/Slider';
 import {
   DRAW_DEFAULT_COLOR,
@@ -37,12 +38,6 @@ export interface DrawToolProps {
   onSettingsChange: (next: DrawToolSettings) => void;
 }
 
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.6)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
-const SCRIM_BORDER = 'rgba(255,255,255,0.35)';
-
 const CHIP_HEIGHT = 30;
 const CHIP_MIN_WIDTH = 64;
 const CHIP_HIT_SLOP = 8;
@@ -56,6 +51,7 @@ const BRUSHES: { id: DrawBrush; labelKey: keyof MediaEditorStrings }[] = [
 
 export function DrawTool({ controller, settings, onSettingsChange }: DrawToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
   const [setBrushRowRef, onBrushRowContentSizeChange] = useRtlHorizontalScrollLanding();
@@ -103,14 +99,14 @@ export function DrawTool({ controller, settings, onSettingsChange }: DrawToolPro
                   height: CHIP_HEIGHT,
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : panel.textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -166,7 +162,7 @@ export function DrawTool({ controller, settings, onSettingsChange }: DrawToolPro
                   },
                 ]}>
                 <View
-                  style={[styles.swatch, { backgroundColor: color, borderColor: SCRIM_BORDER }]}
+                  style={[styles.swatch, { backgroundColor: color, borderColor: panel.border }]}
                 />
               </Pressable>
             );
@@ -190,14 +186,14 @@ export function DrawTool({ controller, settings, onSettingsChange }: DrawToolPro
           style={[
             styles.clearButton,
             {
-              borderColor: SCRIM_BORDER,
+              borderColor: panel.border,
               borderRadius: theme.radius.md,
               paddingHorizontal: theme.spacing.md,
               paddingVertical: theme.spacing.xs,
               opacity: hasStrokes ? 1 : 0.4,
             },
           ]}>
-          <Text style={{ color: SCRIM_TEXT_MUTED, fontSize: 12 }}>{t('clearDrawing')}</Text>
+          <Text style={{ color: panel.textMuted, fontSize: 12 }}>{t('clearDrawing')}</Text>
         </Pressable>
       </View>
     </View>

@@ -5,6 +5,7 @@ import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontal
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import type { MediaEditorStrings } from '../../core/i18n/strings';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette, isPanelDark } from '../../core/theming/theme';
 import {
   BUILTIN_STICKER_PACKS,
   generateLayerId,
@@ -18,12 +19,6 @@ export interface StickerToolProps {
   /** Consumer packs appended after built-ins. */
   stickerPacks?: readonly PhotoStickerPack[];
 }
-
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.75)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
-const SCRIM_ITEM_BG = 'rgba(255,255,255,0.06)';
 
 const PACK_CHIP_HEIGHT = 32;
 const PACK_CHIP_MIN_WIDTH = 64;
@@ -48,6 +43,10 @@ const GRID_MAX_HEIGHT = 2 * GRID_ITEM_SIZE + 8 + 2 * GRID_VERTICAL_PADDING;
 /** Pack chips + wrapping grid; tap-to-add spawns a StickerLayer at a staggered center. */
 export function StickerTool({ controller, stickerPacks }: StickerToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
+  const panelDark = isPanelDark(theme);
+  const itemBg = panelDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)';
+  const textMuted = panelDark ? 'rgba(255,255,255,0.75)' : theme.colors.textMuted;
   const { t, isRTL } = useEditorI18n();
   const { dispatch } = controller;
   const [setPackRowRef, onPackRowContentSizeChange] = useRtlHorizontalScrollLanding();
@@ -121,14 +120,14 @@ export function StickerTool({ controller, stickerPacks }: StickerToolProps) {
                   height: PACK_CHIP_HEIGHT,
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -166,7 +165,7 @@ export function StickerTool({ controller, stickerPacks }: StickerToolProps) {
                       width: GRID_ITEM_SIZE,
                       height: GRID_ITEM_SIZE,
                       borderRadius: theme.radius.md,
-                      backgroundColor: SCRIM_ITEM_BG,
+                      backgroundColor: itemBg,
                     },
                   ]}>
                   <Text
@@ -193,7 +192,7 @@ export function StickerTool({ controller, stickerPacks }: StickerToolProps) {
                       width: GRID_ITEM_SIZE,
                       height: GRID_ITEM_SIZE,
                       borderRadius: theme.radius.md,
-                      backgroundColor: SCRIM_ITEM_BG,
+                      backgroundColor: itemBg,
                     },
                   ]}>
                   {(() => {

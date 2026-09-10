@@ -9,6 +9,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.view.Surface
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
@@ -49,6 +50,8 @@ class ScrubEngine private constructor(
   private var maxQueuedUs = -1L
   // Consecutive decode passes that produced zero output; bounded before going fatal.
   private var stalledPasses = 0
+  // Last on-screen paint (uptime); lets a chasing decoder show progress instead of dropping every frame.
+  private var lastPaintUptimeMs = 0L
   // Written on the UI thread (view bind), read on the worker (reportFatal).
   @Volatile private var errorListener: ((String) -> Unit)? = null
 
@@ -247,9 +250,21 @@ class ScrubEngine private constructor(
     var emptyDequeues = 0
 
     while (!released.get() && !fatal.get()) {
-      // Re-read every iteration: mid-decode retargeting.
-      target = pendingTargetUs.get()
-      if (target == NO_TARGET) return
+      // Per-pass target semantics: FORWARD retargets are accepted mid-drain (flush-jumping when a
+      // keyframe makes that cheaper); BACKWARD retargets are deferred until this pass renders. A
+      // moving finger retargets every tick — honoring backward moves inline meant flush+seek+restart
+      // per tick, so no frame ever completed and the preview froze until finger lift (#73).
+      val retarget = pendingTargetUs.get()
+      if (retarget != NO_TARGET && retarget > target) {
+        if (maxQueuedUs >= 0 && hasSyncBetween(maxQueuedUs, retarget)) {
+          c.flush()
+          ex.seekTo(retarget, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+          sawInputEos = false
+          maxQueuedUs = -1L
+          lastRenderedUs.set(-1L)
+        }
+        target = retarget
+      }
 
       if (!sawInputEos) {
         val inIndex = c.dequeueInputBuffer(0L)
@@ -291,33 +306,31 @@ class ScrubEngine private constructor(
           stalledPasses = 0
           val ptsUs = bufferInfo.presentationTimeUs
           val eos = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-          val newTarget = pendingTargetUs.get()
-          if (newTarget != NO_TARGET && newTarget < ptsUs - FRAME_TOLERANCE_US) {
-            // Newest target moved behind this frame: flush inline (rescheduling would ping-pong — the next pass sees only lastRenderedUs, not how far the codec drained).
-            c.releaseOutputBuffer(outIndex, false)
-            c.flush()
-            ex.seekTo(newTarget, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
-            sawInputEos = false
-            maxQueuedUs = -1L
-            lastRenderedUs.set(-1L)
-            continue
-          }
-          val effectiveTarget = if (newTarget == NO_TARGET) target else newTarget
-          if (ptsUs + FRAME_TOLERANCE_US >= effectiveTarget || eos) {
-            // Render: reached the newest target (or clamped to the last frame at EOS).
+          if (ptsUs + FRAME_TOLERANCE_US >= target || eos) {
+            // Render: reached this pass's target (or clamped to the last frame at EOS).
             c.releaseOutputBuffer(outIndex, true)
             lastRenderedUs.set(ptsUs)
+            lastPaintUptimeMs = SystemClock.uptimeMillis()
             if (eos) return
             val after = pendingTargetUs.get()
             if (after == NO_TARGET || abs(after - ptsUs) <= FRAME_TOLERANCE_US) return
             if (after < ptsUs) {
-              // Target moved backward mid-render: reschedule — next pass flushes since target is behind lastRenderedUs.
+              // Deferred backward retarget: reschedule — the next pass flushes exactly once for it.
               scheduleDecode()
               return
             }
-            // An even newer target moved ahead meanwhile — keep draining forward.
+            // An even newer target moved ahead meanwhile — keep draining; the loop head accepts it.
           } else {
-            c.releaseOutputBuffer(outIndex, false)
+            // Still chasing. Paint anyway if the screen has been stale ≥ PROGRESS_PAINT_INTERVAL_MS —
+            // a decoder slower than the drag otherwise drops every frame and the preview freezes (#73).
+            val now = SystemClock.uptimeMillis()
+            if (now - lastPaintUptimeMs >= PROGRESS_PAINT_INTERVAL_MS) {
+              c.releaseOutputBuffer(outIndex, true)
+              lastRenderedUs.set(ptsUs)
+              lastPaintUptimeMs = now
+            } else {
+              c.releaseOutputBuffer(outIndex, false)
+            }
             if (eos) return
           }
         }
@@ -352,6 +365,8 @@ class ScrubEngine private constructor(
     private const val MAX_EMPTY_DEQUEUES = 100
     private const val MAX_STALLED_PASSES = 3
     private const val STALL_RETRY_DELAY_MS = 50L
+    // Max screen staleness while chasing a moving target before a progress frame is painted.
+    private const val PROGRESS_PAINT_INTERVAL_MS = 80L
 
     private val sessions = ConcurrentHashMap<Int, ScrubEngine>()
     private val nextId = AtomicInteger(1)

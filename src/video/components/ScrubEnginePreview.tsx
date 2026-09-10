@@ -17,7 +17,7 @@ interface NativeScrubPreviewProps {
 
 // Android-only: fail closed on other platforms (component is gated by caller).
 const NativeScrubPreview = (
-  Platform.OS === 'android' ? requireNativeView('MediaEditor') : null
+  Platform.OS === 'android' ? requireNativeView('MediaEditor', 'ScrubPreviewView') : null
 ) as React.ComponentType<NativeScrubPreviewProps> | null;
 
 export interface ScrubEnginePreviewProps {

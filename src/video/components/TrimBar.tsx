@@ -8,6 +8,7 @@ import {
   View,
   type LayoutChangeEvent,
 } from 'react-native';
+import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import { createRafCoalescer } from '../../core/hooks/rafCoalescer';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
@@ -29,6 +30,8 @@ export interface TrimBarProps {
   onScrubEnd?: () => void;
   /** Smallest selectable range. Defaults to 1000 ms. */
   minDurationMs?: number;
+  /** Current playback position (ms), driven on the UI thread; renders the playhead line when provided. */
+  playheadMs?: SharedValue<number>;
 }
 
 const HANDLE_WIDTH = 20;
@@ -45,6 +48,7 @@ export function TrimBar({
   onScrub,
   onScrubEnd,
   minDurationMs = 1000,
+  playheadMs,
 }: TrimBarProps) {
   const theme = useEditorTheme();
   const { t } = useEditorI18n();
@@ -201,6 +205,15 @@ export function TrimBar({
   const selectionWidth = Math.max(0, endX - startX);
   const tileWidth = usable > 0 ? usable / THUMBNAIL_COUNT : 0;
 
+  const playheadStyle = useAnimatedStyle(() => {
+    if (playheadMs == null || durationMs <= 0 || usable <= 0) return { opacity: 0 };
+    const x = (playheadMs.value / durationMs) * usable;
+    return {
+      opacity: 1,
+      transform: [{ translateX: Math.min(Math.max(x, 0), usable) }],
+    };
+  }, [playheadMs, durationMs, usable]);
+
   return (
     <View
       style={{
@@ -265,6 +278,9 @@ export function TrimBar({
                 },
               ]}
             />
+            {playheadMs != null && (
+              <Animated.View pointerEvents="none" style={[styles.playhead, playheadStyle]} />
+            )}
             <View
               {...startHandle.panHandlers}
               accessibilityRole="adjustable"
@@ -352,6 +368,19 @@ const styles = StyleSheet.create({
     bottom: 0,
     borderTopWidth: 2,
     borderBottomWidth: 2,
+  },
+  // Pinned white over video thumbnails (theme-independent, like platform players); hairline dark edges for light frames.
+  playhead: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: HANDLE_WIDTH - 1.5,
+    width: 3,
+    borderRadius: 1.5,
+    backgroundColor: '#FFFFFF',
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(0,0,0,0.35)',
   },
   handle: {
     position: 'absolute',

@@ -4,13 +4,8 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { EditorIcon, type EditorIconName } from '../../core/icons/IconContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette, isPanelDark, type MediaEditorTheme } from '../../core/theming/theme';
 import type { BackgroundRemovalEngine } from '../ai/types';
-
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.75)';
-const SCRIM_ROW_BG = 'rgba(255,255,255,0.06)';
-const SCRIM_ROW_BG_DISABLED = 'rgba(255,255,255,0.03)';
-const SCRIM_ERROR = '#FF6B6B';
 
 export interface AIToolProps {
   engine: BackgroundRemovalEngine;
@@ -30,6 +25,10 @@ export function AITool({
   onAddCutoutSticker,
 }: AIToolProps) {
   const theme = useEditorTheme();
+  const panelDark = isPanelDark(theme);
+  const textMuted = panelDark ? 'rgba(255,255,255,0.75)' : theme.colors.textMuted;
+  // Fixed bright red on dark panels so errors read over the scrim; light panels use the theme's danger color.
+  const errorColor = panelDark ? '#FF6B6B' : theme.colors.danger;
   const { t, isRTL } = useEditorI18n();
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState<'aiNoSubject' | 'aiError' | null>(null);
@@ -110,12 +109,12 @@ export function AITool({
             },
           ]}>
           <ActivityIndicator color={theme.colors.accent} />
-          <Text style={{ color: SCRIM_TEXT_MUTED, fontSize: 12 }}>{t('aiProcessing')}</Text>
+          <Text style={{ color: textMuted, fontSize: 12 }}>{t('aiProcessing')}</Text>
         </View>
       ) : errorKey ? (
         <Text
           style={{
-            color: SCRIM_ERROR,
+            color: errorColor,
             fontSize: 12,
             paddingHorizontal: theme.spacing.md,
             paddingVertical: theme.spacing.xs,
@@ -142,6 +141,8 @@ function ActionRow({
   isRTL: boolean;
 }) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
+  const { rowBg, rowBgDisabled } = rowBackgrounds(theme);
   return (
     <Pressable
       onPress={onPress}
@@ -158,15 +159,15 @@ function ActionRow({
           borderRadius: theme.radius.md,
           flexDirection: isRTL ? 'row-reverse' : 'row',
           gap: theme.spacing.sm,
-          backgroundColor: disabled ? SCRIM_ROW_BG_DISABLED : SCRIM_ROW_BG,
+          backgroundColor: disabled ? rowBgDisabled : rowBg,
           opacity: disabled ? 0.5 : 1,
         },
       ]}>
-      <EditorIcon name={icon} size={20} color={SCRIM_TEXT} />
+      <EditorIcon name={icon} size={20} color={panel.text} />
       <Text
         numberOfLines={1}
         style={{
-          color: SCRIM_TEXT,
+          color: panel.text,
           fontSize: 14,
           fontWeight: '600',
         }}>
@@ -174,6 +175,14 @@ function ActionRow({
       </Text>
     </Pressable>
   );
+}
+
+// AI rows use lighter fills than the standard chip tokens (0.06/0.03 vs 0.08/0.16).
+function rowBackgrounds(theme: MediaEditorTheme): { rowBg: string; rowBgDisabled: string } {
+  if (isPanelDark(theme)) {
+    return { rowBg: 'rgba(255,255,255,0.06)', rowBgDisabled: 'rgba(255,255,255,0.03)' };
+  }
+  return { rowBg: 'rgba(0,0,0,0.04)', rowBgDisabled: 'rgba(0,0,0,0.02)' };
 }
 
 function mapErrorToKey(error: unknown): 'aiNoSubject' | 'aiError' {

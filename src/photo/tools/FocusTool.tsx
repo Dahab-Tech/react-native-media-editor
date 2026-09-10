@@ -5,14 +5,10 @@ import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontal
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import type { MediaEditorStrings } from '../../core/i18n/strings';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
 import { Slider } from '../components/Slider';
 import type { FocusMode } from '../focus';
 import { type PhotoEditorController } from '../state/photoEditorState';
-
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.6)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
 
 const CHIP_HEIGHT = 30;
 const CHIP_MIN_WIDTH = 64;
@@ -30,6 +26,7 @@ export interface FocusToolProps {
 
 export function FocusTool({ controller }: FocusToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
   const focus = state.focus;
@@ -65,14 +62,14 @@ export function FocusTool({ controller }: FocusToolProps) {
                   height: CHIP_HEIGHT,
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : panel.textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -102,7 +99,7 @@ export function FocusTool({ controller }: FocusToolProps) {
       ) : (
         <Text
           style={{
-            color: SCRIM_TEXT_MUTED,
+            color: panel.textMuted,
             fontSize: 12,
             paddingHorizontal: theme.spacing.md,
             paddingVertical: theme.spacing.sm,

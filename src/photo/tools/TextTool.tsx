@@ -4,13 +4,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { EditorIcon } from '../../core/icons/IconContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { isPanelDark } from '../../core/theming/theme';
 
 export interface TextToolProps {
   /** Opens the full-screen TextFocusEditor with a new draft. */
   onAddText: () => void;
 }
-
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.65)';
 
 const PILL_HEIGHT = 34;
 const PILL_RADIUS = 999;
@@ -21,6 +20,7 @@ const ACCENT_TINT_ALPHA = 0.18;
 /** Slim drawer: one "+ Add text" pill + hint. All editing lives in TextFocusEditor. */
 export function TextTool({ onAddText }: TextToolProps) {
   const theme = useEditorTheme();
+  const hintColor = isPanelDark(theme) ? 'rgba(255,255,255,0.65)' : theme.colors.textMuted;
   const { t, isRTL } = useEditorI18n();
 
   return (
@@ -51,7 +51,7 @@ export function TextTool({ onAddText }: TextToolProps) {
       </View>
       <Text
         style={{
-          color: SCRIM_TEXT_MUTED,
+          color: hintColor,
           fontSize: 12,
           textAlign: isRTL ? 'right' : 'left',
         }}>

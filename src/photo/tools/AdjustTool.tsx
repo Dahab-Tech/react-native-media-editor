@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontalScrollLanding';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
 import {
   ADJUSTMENT_META,
   adjustmentMeta,
@@ -16,31 +17,29 @@ import { type PhotoEditorController } from '../state/photoEditorState';
 
 export interface AdjustToolProps {
   controller: PhotoEditorController;
+  /** Restrict which sliders show (chip order follows ADJUSTMENT_META); omitted = all. */
+  keys?: readonly PhotoAdjustmentKey[];
 }
-
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.6)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
-const SCRIM_BORDER = 'rgba(255,255,255,0.35)';
 
 // 30pt visible; 8pt hitSlop meets the 44pt touch minimum.
 const CHIP_HEIGHT = 30;
 const CHIP_MIN_WIDTH = 64;
 const CHIP_HIT_SLOP = 8;
 
-export function AdjustTool({ controller }: AdjustToolProps) {
+export function AdjustTool({ controller, keys }: AdjustToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
   const [setChipRowRef, onChipRowContentSizeChange] = useRtlHorizontalScrollLanding();
+  const metas = keys ? ADJUSTMENT_META.filter((meta) => keys.includes(meta.key)) : ADJUSTMENT_META;
 
   // Default to first non-neutral key so returning to the tool jumps to the last-touched slider.
   const initialSelected = (): PhotoAdjustmentKey => {
-    for (const meta of ADJUSTMENT_META) {
+    for (const meta of metas) {
       if (!isNeutral(meta.key, state.adjustments[meta.key])) return meta.key;
     }
-    return 'exposure';
+    return metas[0]?.key ?? 'exposure';
   };
   const [selectedKey, setSelectedKey] = useState<PhotoAdjustmentKey>(initialSelected);
   const selectedMeta = adjustmentMeta(selectedKey);
@@ -70,7 +69,7 @@ export function AdjustTool({ controller }: AdjustToolProps) {
           paddingHorizontal: theme.spacing.md,
           gap: theme.spacing.xs,
         }}>
-        {ADJUSTMENT_META.map((meta) => {
+        {metas.map((meta) => {
           const active = meta.key === selectedKey;
           const value = state.adjustments[meta.key];
           const nonNeutral = !isNeutral(meta.key, value);
@@ -97,14 +96,14 @@ export function AdjustTool({ controller }: AdjustToolProps) {
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
                   paddingVertical: 0,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : panel.textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -116,7 +115,7 @@ export function AdjustTool({ controller }: AdjustToolProps) {
                   style={[
                     styles.dot,
                     {
-                      backgroundColor: active ? theme.colors.accent : SCRIM_TEXT,
+                      backgroundColor: active ? theme.colors.accent : panel.text,
                     },
                   ]}
                 />
@@ -157,7 +156,7 @@ export function AdjustTool({ controller }: AdjustToolProps) {
           ]}>
           <Text
             style={{
-              color: selectedIsNeutral ? SCRIM_TEXT_MUTED : SCRIM_TEXT,
+              color: selectedIsNeutral ? panel.textMuted : panel.text,
               fontSize: 13,
               fontWeight: '500',
             }}>
@@ -170,13 +169,13 @@ export function AdjustTool({ controller }: AdjustToolProps) {
           style={[
             styles.resetAll,
             {
-              borderColor: SCRIM_BORDER,
+              borderColor: panel.border,
               borderRadius: theme.radius.md,
               paddingHorizontal: theme.spacing.md,
               paddingVertical: theme.spacing.xs,
             },
           ]}>
-          <Text style={{ color: SCRIM_TEXT_MUTED, fontSize: 12 }}>{t('resetAll')}</Text>
+          <Text style={{ color: panel.textMuted, fontSize: 12 }}>{t('resetAll')}</Text>
         </Pressable>
       </View>
     </View>

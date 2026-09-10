@@ -2,12 +2,13 @@ import { type SkImage } from '@shopify/react-native-skia';
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
-import { useEditorI18n } from '../../core/i18n/I18nContext';
-import { useEditorTheme } from '../../core/theming/ThemeContext';
-import { type PhotoFilterPack } from '../color';
-import { type PhotoOverlayPack } from '../overlays';
 import { FiltersTool } from './FiltersTool';
 import { OverlaysTool } from './OverlaysTool';
+import { useEditorI18n } from '../../core/i18n/I18nContext';
+import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
+import { type PhotoFilterPack } from '../color';
+import { type PhotoOverlayPack } from '../overlays';
 import { type PhotoEditorController } from '../state/photoEditorState';
 
 export interface EffectsToolProps {
@@ -21,13 +22,10 @@ type EffectsSegment = 'filters' | 'overlays';
 
 const DEFAULT_SEGMENT: EffectsSegment = 'filters';
 
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_BORDER = 'rgba(255,255,255,0.35)';
-const SCRIM_SEGMENT_BG = 'rgba(255,255,255,0.16)';
-
 /** Segmented control over FiltersTool + OverlaysTool. Purely a UI grouping; reducer state is untouched. */
 export function EffectsTool({ image, controller, filterPacks, overlayPacks }: EffectsToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const [segment, setSegment] = useState<EffectsSegment>(DEFAULT_SEGMENT);
 
@@ -40,7 +38,7 @@ export function EffectsTool({ image, controller, filterPacks, overlayPacks }: Ef
             flexDirection: isRTL ? 'row-reverse' : 'row',
             marginHorizontal: theme.spacing.md,
             marginTop: theme.spacing.sm,
-            borderColor: SCRIM_BORDER,
+            borderColor: panel.border,
             borderRadius: theme.radius.md,
           },
         ]}>
@@ -76,6 +74,7 @@ interface SegmentProps {
 
 function Segment({ label, active, onPress }: SegmentProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   return (
     <Pressable
       onPress={onPress}
@@ -85,13 +84,13 @@ function Segment({ label, active, onPress }: SegmentProps) {
       style={({ pressed }) => [
         styles.segment,
         {
-          backgroundColor: active ? theme.colors.accent : SCRIM_SEGMENT_BG,
+          backgroundColor: active ? theme.colors.accent : panel.chipBgActive,
           opacity: pressed ? 0.85 : 1,
         },
       ]}>
       <Text
         style={{
-          color: active ? theme.colors.onAccent : SCRIM_TEXT,
+          color: active ? theme.colors.onAccent : panel.text,
           fontWeight: active ? '700' : '500',
           fontSize: 13,
           letterSpacing: 0.2,

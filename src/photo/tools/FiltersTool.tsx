@@ -15,6 +15,7 @@ import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontal
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import type { MediaEditorStrings } from '../../core/i18n/strings';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette, isPanelDark } from '../../core/theming/theme';
 import {
   BUILTIN_FILTER_PACKS,
   buildLutImageFilter,
@@ -36,17 +37,15 @@ export interface FiltersToolProps {
 
 const THUMB_SIZE = 64;
 
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.75)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
-const SCRIM_THUMB_BG = 'rgba(0,0,0,0.35)';
-
 const PACK_CHIP_HEIGHT = 32;
 const PACK_CHIP_MIN_WIDTH = 64;
 
 export function FiltersTool({ image, controller, filterPacks }: FiltersToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
+  // Thumbnails are photo previews — a dark frame keeps them readable regardless of theme.
+  const thumbFrameBg = 'rgba(0,0,0,0.35)';
+  const textMuted = isPanelDark(theme) ? 'rgba(255,255,255,0.75)' : theme.colors.textMuted;
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
   const [setPackRowRef, onPackRowContentSizeChange] = useRtlHorizontalScrollLanding();
@@ -109,14 +108,14 @@ export function FiltersTool({ image, controller, filterPacks }: FiltersToolProps
                   height: PACK_CHIP_HEIGHT,
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -156,7 +155,7 @@ export function FiltersTool({ image, controller, filterPacks }: FiltersToolProps
                     height: THUMB_SIZE + 4,
                     borderColor: active ? theme.colors.accent : 'transparent',
                     borderRadius: theme.radius.sm + 2,
-                    backgroundColor: SCRIM_THUMB_BG,
+                    backgroundColor: thumbFrameBg,
                   },
                 ]}>
                 <FilterThumbnail
@@ -169,7 +168,7 @@ export function FiltersTool({ image, controller, filterPacks }: FiltersToolProps
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? theme.colors.accent : SCRIM_TEXT_MUTED,
+                  color: active ? theme.colors.accent : textMuted,
                   fontSize: 11,
                   fontWeight: active ? '700' : '500',
                   maxWidth: THUMB_SIZE + 12,

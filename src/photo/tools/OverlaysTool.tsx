@@ -16,6 +16,7 @@ import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontal
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import type { MediaEditorStrings } from '../../core/i18n/strings';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette, isPanelDark } from '../../core/theming/theme';
 import { Slider } from '../components/Slider';
 import {
   BUILTIN_OVERLAY_PACKS,
@@ -30,11 +31,8 @@ export interface OverlaysToolProps {
   overlayPacks?: readonly PhotoOverlayPack[];
 }
 
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.75)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
-const SCRIM_THUMB_BG = 'rgba(60, 60, 70, 1)';
+// Opaque so Skia blend modes have something to composite against; kept dark in both schemes.
+const SWATCH_COMPOSITE_BG = 'rgba(60, 60, 70, 1)';
 
 const PACK_CHIP_HEIGHT = 32;
 const PACK_CHIP_MIN_WIDTH = 64;
@@ -44,6 +42,8 @@ const NONE_SWATCH_ID = '__overlays_none__';
 /** Pack chips + swatch strip + intensity slider. Structure mirrors FiltersTool. */
 export function OverlaysTool({ controller, overlayPacks }: OverlaysToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
+  const textMuted = isPanelDark(theme) ? 'rgba(255,255,255,0.75)' : theme.colors.textMuted;
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
   const [setPackRowRef, onPackRowContentSizeChange] = useRtlHorizontalScrollLanding();
@@ -98,14 +98,14 @@ export function OverlaysTool({ controller, overlayPacks }: OverlaysToolProps) {
                   height: PACK_CHIP_HEIGHT,
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -142,7 +142,7 @@ export function OverlaysTool({ controller, overlayPacks }: OverlaysToolProps) {
                 height: SWATCH_SIZE + 4,
                 borderColor: !overlayActive ? theme.colors.accent : 'transparent',
                 borderRadius: theme.radius.sm + 2,
-                backgroundColor: SCRIM_THUMB_BG,
+                backgroundColor: SWATCH_COMPOSITE_BG,
               },
             ]}>
             <View style={{ width: SWATCH_SIZE, height: SWATCH_SIZE }} />
@@ -150,7 +150,7 @@ export function OverlaysTool({ controller, overlayPacks }: OverlaysToolProps) {
           <Text
             numberOfLines={1}
             style={{
-              color: !overlayActive ? theme.colors.accent : SCRIM_TEXT_MUTED,
+              color: !overlayActive ? theme.colors.accent : textMuted,
               fontSize: 11,
               fontWeight: !overlayActive ? '700' : '500',
               maxWidth: SWATCH_SIZE + 12,
@@ -183,7 +183,7 @@ export function OverlaysTool({ controller, overlayPacks }: OverlaysToolProps) {
                     height: SWATCH_SIZE + 4,
                     borderColor: active ? theme.colors.accent : 'transparent',
                     borderRadius: theme.radius.sm + 2,
-                    backgroundColor: SCRIM_THUMB_BG,
+                    backgroundColor: SWATCH_COMPOSITE_BG,
                   },
                 ]}>
                 <OverlaySwatch definition={definition} size={SWATCH_SIZE} />
@@ -191,7 +191,7 @@ export function OverlaysTool({ controller, overlayPacks }: OverlaysToolProps) {
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? theme.colors.accent : SCRIM_TEXT_MUTED,
+                  color: active ? theme.colors.accent : textMuted,
                   fontSize: 11,
                   fontWeight: active ? '700' : '500',
                   maxWidth: SWATCH_SIZE + 12,
@@ -225,7 +225,7 @@ function OverlaySwatch({ definition, size }: { definition: PhotoOverlayDefinitio
   return (
     <Canvas style={{ width: size, height: size }}>
       {/* In-canvas dark base so Skia blend modes have something to composite against. */}
-      <Rect x={0} y={0} width={size} height={size} color={SCRIM_THUMB_BG} />
+      <Rect x={0} y={0} width={size} height={size} color={SWATCH_COMPOSITE_BG} />
       {definition.kind === 'procedural' ? (
         <ProceduralSwatchBody definition={definition} size={size} />
       ) : (

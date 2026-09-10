@@ -1,9 +1,9 @@
 Pod::Spec.new do |s|
   s.name           = 'MediaEditor'
-  s.version        = '0.3.1'
+  s.version        = '0.3.2'
   s.summary        = 'Customizable photo & video editor for Expo / React Native with RTL support'
   s.description    = 'Photo editor with crop, filters, adjustments, text, stickers, draw, focus, and overlays; video editor with trim, crop, cover, filters, and speed. RTL built in.'
-  s.author         = 'DahabTech LLC <dahabtech.llc@gmail.com>'
+  s.author         = 'DahabTech LLC <contact@dahab-tech.com>'
   s.homepage       = 'https://dahab-tech.com/apps/react-native-media-editor'
   s.platforms      = {
     :ios => '16.4',

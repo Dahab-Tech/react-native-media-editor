@@ -22,6 +22,11 @@ struct TrimOptions: Record {
   @Field var crop: CropRectOptions? = nil
   // Static PNG overlay baked into every frame; forces re-encode (incompatible with passthrough).
   @Field var overlayImageUri: String? = nil
+  // Overlay wash PNG blended per-frame against the graded frame (unlike overlayImageUri's alpha paste).
+  @Field var washImageUri: String? = nil
+  // Skia blend-mode name ('screen', 'softLight', ...); mapped to the matching CI blend filter.
+  @Field var washBlendMode: String? = nil
+  @Field var washIntensity: Double = 1.0
   // 20-float row-major 4×5 color matrix (Skia layout); absent skips the color pipeline.
   @Field var colorMatrix: [Double]? = nil
   // HALD LUT PNG; applied after the matrix so both filter kinds share the same seam.

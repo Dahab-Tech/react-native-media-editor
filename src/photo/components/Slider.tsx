@@ -4,6 +4,7 @@ import { PanResponder, StyleSheet, Text, View, type LayoutChangeEvent } from 're
 import { createRafCoalescer } from '../../core/hooks/rafCoalescer';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette, isPanelDark } from '../../core/theming/theme';
 
 export interface SliderProps {
   label: string;
@@ -98,9 +99,16 @@ export function Slider({
   const neutralRatio = range === 0 ? 0 : (neutralPoint - min) / range;
   const neutralX = neutralRatio * usable + THUMB_SIZE / 2;
 
-  const labelColor = onScrim ? '#FFFFFF' : theme.colors.text;
-  const mutedColor = onScrim ? 'rgba(255,255,255,0.6)' : theme.colors.textMuted;
-  const trackColor = onScrim ? 'rgba(255,255,255,0.25)' : theme.colors.border;
+  const panel = getPanelPalette(theme);
+  const panelDark = isPanelDark(theme);
+  const labelColor = onScrim ? panel.text : theme.colors.text;
+  const mutedColor = onScrim ? panel.textMuted : theme.colors.textMuted;
+  // Slider track is deliberately lighter than the panel border ramp (0.25 vs 0.35).
+  const trackColor = onScrim
+    ? panelDark
+      ? 'rgba(255,255,255,0.25)'
+      : 'rgba(0,0,0,0.15)'
+    : theme.colors.border;
 
   // Fill spans from the neutral tick to the thumb so signed adjustments read as offset-from-center.
   const fillLeft = Math.min(neutralX, thumbX + THUMB_SIZE / 2);

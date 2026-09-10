@@ -62,5 +62,24 @@ class MediaEditorModule : Module() {
         view.setVideoRotation(rotation ?: 0)
       }
     }
+
+    View(GradedPreviewView::class) {
+      Events("onPreviewError")
+      Prop("sourceUri") { view: GradedPreviewView, value: String? -> view.sourceUri = value }
+      Prop("startMs") { view: GradedPreviewView, value: Double -> view.startMs = value }
+      Prop("endMs") { view: GradedPreviewView, value: Double -> view.endMs = value }
+      Prop("colorMatrix") { view: GradedPreviewView, value: List<Double>? -> view.colorMatrix = value }
+      Prop("lutUri") { view: GradedPreviewView, value: String? -> view.lutUri = value }
+      Prop("lutIntensity") { view: GradedPreviewView, value: Double -> view.lutIntensity = value }
+      Prop("washUri") { view: GradedPreviewView, value: String? -> view.washUri = value }
+      Prop("washBlendMode") { view: GradedPreviewView, value: String? -> view.washBlendMode = value }
+      Prop("washIntensity") { view: GradedPreviewView, value: Double -> view.washIntensity = value }
+      Prop("renderHeight") { view: GradedPreviewView, value: Int -> view.renderHeight = value }
+      Prop("rate") { view: GradedPreviewView, value: Double -> view.rate = value }
+      Prop("paused") { view: GradedPreviewView, value: Boolean -> view.paused = value }
+      Prop("positionMs") { view: GradedPreviewView, value: Double -> view.positionMs = value }
+      OnViewDidUpdateProps { view: GradedPreviewView -> view.commitProps() }
+      OnViewDestroys { view: GradedPreviewView -> view.release() }
+    }
   }
 }

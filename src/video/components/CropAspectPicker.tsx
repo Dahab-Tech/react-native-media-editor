@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text } from 'react-native';
 import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontalScrollLanding';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
 import { type AspectRatio } from '../../photo/state/photoEditorState';
 
 export interface CropAspectPickerProps {
@@ -13,10 +14,6 @@ export interface CropAspectPickerProps {
   value: AspectRatio;
   onChange: (aspect: AspectRatio) => void;
 }
-
-// On-scrim palette (dark video canvas).
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_BORDER = 'rgba(255,255,255,0.35)';
 
 const RATIO_LABELS: Partial<Record<AspectRatio, string>> = {
   '1:1': '1:1',
@@ -28,6 +25,7 @@ const RATIO_LABELS: Partial<Record<AspectRatio, string>> = {
 /** Horizontal pill row of crop aspect presets. */
 export function CropAspectPicker({ options, value, onChange }: CropAspectPickerProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const [setScrollRef, onContentSizeChange] = useRtlHorizontalScrollLanding();
 
@@ -63,7 +61,7 @@ export function CropAspectPicker({ options, value, onChange }: CropAspectPickerP
             style={[
               styles.chip,
               {
-                borderColor: active ? theme.colors.accent : SCRIM_BORDER,
+                borderColor: active ? theme.colors.accent : panel.border,
                 backgroundColor: active ? theme.colors.accent : 'transparent',
                 borderRadius: 999,
                 paddingHorizontal: theme.spacing.sm,
@@ -72,7 +70,7 @@ export function CropAspectPicker({ options, value, onChange }: CropAspectPickerP
             ]}>
             <Text
               style={{
-                color: active ? theme.colors.onAccent : SCRIM_TEXT,
+                color: active ? theme.colors.onAccent : panel.text,
                 fontWeight: '600',
                 fontSize: 13,
                 fontVariant: ['tabular-nums'],

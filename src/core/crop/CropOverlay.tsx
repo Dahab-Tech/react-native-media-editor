@@ -2,7 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
-import { absSinCosForAngle, maxCropScaleForAngle, panLimitsForAngle } from './straightenMath';
+import {
+  absSinCosForAngle,
+  maxCropScaleAnywhereForAngle,
+  panLimitsForAngle,
+} from './straightenMath';
 import { type CropViewMode, type NormalizedCrop } from './types';
 import { useEditorTheme } from '../theming/ThemeContext';
 
@@ -42,9 +46,15 @@ export interface CropView {
 type Corner = 'tl' | 'tr' | 'bl' | 'br';
 type Edge = 'top' | 'bottom' | 'left' | 'right';
 
-// Invisible touch target kept large; visual L-bracket is thinner. Do not shrink to match the visual.
-const HANDLE_SIZE = 28;
+// Invisible touch targets kept large; visual L-bracket is thinner. Do not shrink to match the visual.
+// Targets are biased INWARD: a full-screen crop leaves corners only CROP_FRAME_MARGIN (16px) from the
+// display edge — Android eats outward touches there (parent-bounds clipping + back-gesture strip).
+const CORNER_TOUCH_SIZE = 56;
+const CORNER_TOUCH_OUTSET = 12;
+/** Inward reach of a corner target; edge strips inset by this so corners win at intersections. */
+const CORNER_TOUCH_INSET = CORNER_TOUCH_SIZE - CORNER_TOUCH_OUTSET;
 const EDGE_STRIP_THICKNESS = 28;
+const EDGE_STRIP_OUTSET = 8;
 const BRACKET_ARM_LENGTH = 20;
 const BRACKET_THICKNESS = 3;
 const EDGE_HOLDER_LENGTH = 20;
@@ -194,6 +204,12 @@ export function CropOverlay({
     aspect: number | null;
   } | null>(null);
 
+  // Anchored (video) mode defers the crop commit to gesture end: per-move onChange re-renders the
+  // whole VideoEditor per touch sample, which made crop drags visibly choppy on Android. During the
+  // drag only liveFrame (local state) animates; the pending value commits once on release/terminate.
+  const pendingResize = useRef<ResizeResult | null>(null);
+  const pendingPanCrop = useRef<NormalizedCrop | null>(null);
+
   // Commit uses the LIVE photoRect so the crop doesn't drift under the finger during pull-to-zoom-out.
   const commitFrame = (frame: CropView['frame'], photo: CropView['photoRect']) => {
     const s = latest.current;
@@ -235,13 +251,34 @@ export function CropOverlay({
         const limits = panLimitsForAngle(o.crop, s.imageAspect, s.straighten);
         const nextX = clamp(o.crop.x + (panDirection * dxP) / o.dispW, limits.minX, limits.maxX);
         const nextY = clamp(o.crop.y + (panDirection * dyP) / o.dispH, limits.minY, limits.maxY);
-        s.onChange({ x: nextX, y: nextY, width: o.crop.width, height: o.crop.height });
+        const nextCrop = { x: nextX, y: nextY, width: o.crop.width, height: o.crop.height };
+        if (mode === 'anchored') {
+          // Frame follows the finger locally; photoRect is fixed in anchored mode.
+          const photo = s.photoRect;
+          pendingPanCrop.current = nextCrop;
+          setLiveFrame({
+            x: photo.x + nextX * photo.width,
+            y: photo.y + nextY * photo.height,
+            width: o.crop.width * photo.width,
+            height: o.crop.height * photo.height,
+          });
+        } else {
+          s.onChange(nextCrop);
+        }
       },
       onPanResponderRelease: () => {
         panOrigin.current = null;
+        const pending = pendingPanCrop.current;
+        pendingPanCrop.current = null;
+        if (pending) latest.current.onChange(pending);
+        setLiveFrame(null);
       },
       onPanResponderTerminate: () => {
         panOrigin.current = null;
+        const pending = pendingPanCrop.current;
+        pendingPanCrop.current = null;
+        if (pending) latest.current.onChange(pending);
+        setLiveFrame(null);
       },
     })
   );
@@ -286,8 +323,12 @@ export function CropOverlay({
         const safeScale = e.scale > 0 ? e.scale : 1;
         const invScale = 1 / safeScale;
         const minFactor = Math.max(MIN_NORMALIZED / o.crop.width, MIN_NORMALIZED / o.crop.height);
-        const angleCap = maxCropScaleForAngle(o.crop, s.imageAspect, s.straighten);
-        const maxFactor = Math.min(1 / o.crop.width, 1 / o.crop.height, Math.max(1, angleCap));
+        // Fits-anywhere cap (not center-anchored): growth is legal until the bbox can't fit at any position; pinchLimits below re-clamps x/y for the new size.
+        const maxFactor = Math.min(
+          1 / o.crop.width,
+          1 / o.crop.height,
+          maxCropScaleAnywhereForAngle(o.crop, s.imageAspect, s.straighten)
+        );
         const factor = clamp(invScale, minFactor, maxFactor);
         const width = o.crop.width * factor;
         const height = o.crop.height * factor;
@@ -347,17 +388,27 @@ export function CropOverlay({
                 s.straighten
               );
         setLiveFrame(next.frame);
-        commitFrame(next.frame, next.photoRect);
-        // Anchored mode: photoRect never shrinks, skip pull-to-zoom-out notification.
-        if (mode !== 'anchored') s.onResizeChange?.(next.photoRect);
+        if (mode === 'anchored') {
+          pendingResize.current = next;
+        } else {
+          commitFrame(next.frame, next.photoRect);
+          // Anchored mode has no pull-to-zoom-out; photoRect never shrinks.
+          s.onResizeChange?.(next.photoRect);
+        }
       },
       onPanResponderRelease: () => {
         cornerOrigin.current = null;
+        const pending = pendingResize.current;
+        pendingResize.current = null;
+        if (pending) commitFrame(pending.frame, pending.photoRect);
         setLiveFrame(null);
         if (mode !== 'anchored') latest.current.onResizeEnd?.();
       },
       onPanResponderTerminate: () => {
         cornerOrigin.current = null;
+        const pending = pendingResize.current;
+        pendingResize.current = null;
+        if (pending) commitFrame(pending.frame, pending.photoRect);
         setLiveFrame(null);
         if (mode !== 'anchored') latest.current.onResizeEnd?.();
       },
@@ -405,16 +456,26 @@ export function CropOverlay({
                 s.straighten
               );
         setLiveFrame(next.frame);
-        commitFrame(next.frame, next.photoRect);
-        if (mode !== 'anchored') s.onResizeChange?.(next.photoRect);
+        if (mode === 'anchored') {
+          pendingResize.current = next;
+        } else {
+          commitFrame(next.frame, next.photoRect);
+          s.onResizeChange?.(next.photoRect);
+        }
       },
       onPanResponderRelease: () => {
         edgeOrigin.current = null;
+        const pending = pendingResize.current;
+        pendingResize.current = null;
+        if (pending) commitFrame(pending.frame, pending.photoRect);
         setLiveFrame(null);
         if (mode !== 'anchored') latest.current.onResizeEnd?.();
       },
       onPanResponderTerminate: () => {
         edgeOrigin.current = null;
+        const pending = pendingResize.current;
+        pendingResize.current = null;
+        if (pending) commitFrame(pending.frame, pending.photoRect);
         setLiveFrame(null);
         if (mode !== 'anchored') latest.current.onResizeEnd?.();
       },
@@ -477,15 +538,17 @@ export function CropOverlay({
           />
         </View>
 
-        {/* Edge strips inset by HANDLE_SIZE so corner handles win at intersections. */}
+        {/* Edge strips inset by the corners' inward reach so corner handles win at intersections;
+            biased inward (EDGE_STRIP_OUTSET outside the line, rest inside) like the corners. */}
         <EdgeStrip
           responder={topEdge}
           orientation="horizontal"
           color={borderColor}
+          lineOffset={EDGE_STRIP_OUTSET}
           style={{
-            left: frameX + HANDLE_SIZE,
-            top: frameY - EDGE_STRIP_THICKNESS / 2,
-            width: Math.max(0, frameW - 2 * HANDLE_SIZE),
+            left: frameX + CORNER_TOUCH_INSET,
+            top: frameY - EDGE_STRIP_OUTSET,
+            width: Math.max(0, frameW - 2 * CORNER_TOUCH_INSET),
             height: EDGE_STRIP_THICKNESS,
           }}
         />
@@ -493,10 +556,11 @@ export function CropOverlay({
           responder={bottomEdge}
           orientation="horizontal"
           color={borderColor}
+          lineOffset={EDGE_STRIP_THICKNESS - EDGE_STRIP_OUTSET}
           style={{
-            left: frameX + HANDLE_SIZE,
-            top: frameY + frameH - EDGE_STRIP_THICKNESS / 2,
-            width: Math.max(0, frameW - 2 * HANDLE_SIZE),
+            left: frameX + CORNER_TOUCH_INSET,
+            top: frameY + frameH - (EDGE_STRIP_THICKNESS - EDGE_STRIP_OUTSET),
+            width: Math.max(0, frameW - 2 * CORNER_TOUCH_INSET),
             height: EDGE_STRIP_THICKNESS,
           }}
         />
@@ -504,22 +568,24 @@ export function CropOverlay({
           responder={leftEdge}
           orientation="vertical"
           color={borderColor}
+          lineOffset={EDGE_STRIP_OUTSET}
           style={{
-            left: frameX - EDGE_STRIP_THICKNESS / 2,
-            top: frameY + HANDLE_SIZE,
+            left: frameX - EDGE_STRIP_OUTSET,
+            top: frameY + CORNER_TOUCH_INSET,
             width: EDGE_STRIP_THICKNESS,
-            height: Math.max(0, frameH - 2 * HANDLE_SIZE),
+            height: Math.max(0, frameH - 2 * CORNER_TOUCH_INSET),
           }}
         />
         <EdgeStrip
           responder={rightEdge}
           orientation="vertical"
           color={borderColor}
+          lineOffset={EDGE_STRIP_THICKNESS - EDGE_STRIP_OUTSET}
           style={{
-            left: frameX + frameW - EDGE_STRIP_THICKNESS / 2,
-            top: frameY + HANDLE_SIZE,
+            left: frameX + frameW - (EDGE_STRIP_THICKNESS - EDGE_STRIP_OUTSET),
+            top: frameY + CORNER_TOUCH_INSET,
             width: EDGE_STRIP_THICKNESS,
-            height: Math.max(0, frameH - 2 * HANDLE_SIZE),
+            height: Math.max(0, frameH - 2 * CORNER_TOUCH_INSET),
           }}
         />
 
@@ -574,6 +640,9 @@ function CornerHandle({
 }) {
   const sx = corner === 'tl' || corner === 'bl' ? -1 : 1;
   const sy = corner === 'tl' || corner === 'tr' ? -1 : 1;
+  // Corner point sits CORNER_TOUCH_OUTSET from the view's outward side (sx/sy point outward).
+  const anchorX = sx > 0 ? CORNER_TOUCH_INSET : CORNER_TOUCH_OUTSET;
+  const anchorY = sy > 0 ? CORNER_TOUCH_INSET : CORNER_TOUCH_OUTSET;
   const horizArm = {
     left: sx > 0 ? 0 : -BRACKET_ARM_LENGTH,
     top: sy > 0 ? -BRACKET_THICKNESS : 0,
@@ -592,17 +661,14 @@ function CornerHandle({
   return (
     <View
       {...responder.panHandlers}
-      hitSlop={16}
       style={{
         position: 'absolute',
-        left: x - HANDLE_SIZE / 2,
-        top: y - HANDLE_SIZE / 2,
-        width: HANDLE_SIZE,
-        height: HANDLE_SIZE,
+        left: x - anchorX,
+        top: y - anchorY,
+        width: CORNER_TOUCH_SIZE,
+        height: CORNER_TOUCH_SIZE,
       }}>
-      <View
-        pointerEvents="none"
-        style={{ position: 'absolute', left: HANDLE_SIZE / 2, top: HANDLE_SIZE / 2 }}>
+      <View pointerEvents="none" style={{ position: 'absolute', left: anchorX, top: anchorY }}>
         <View pointerEvents="none" style={{ position: 'absolute', ...horizArm }} />
         <View pointerEvents="none" style={{ position: 'absolute', ...vertArm }} />
       </View>
@@ -610,16 +676,18 @@ function CornerHandle({
   );
 }
 
-/** Edge drag strip with a thin white "holder" bar centered on the frame edge. */
+/** Edge drag strip with a thin white "holder" bar on the frame line (`lineOffset` px across the strip). */
 function EdgeStrip({
   responder,
   orientation,
   color,
+  lineOffset,
   style,
 }: {
   responder: ReturnType<typeof PanResponder.create>;
   orientation: 'horizontal' | 'vertical';
   color: string;
+  lineOffset: number;
   style: { left: number; top: number; width: number; height: number };
 }) {
   if (style.width <= 0 || style.height <= 0) return null;
@@ -627,12 +695,12 @@ function EdgeStrip({
     orientation === 'horizontal'
       ? {
           left: style.width / 2 - EDGE_HOLDER_LENGTH / 2,
-          top: style.height / 2 - EDGE_HOLDER_THICKNESS / 2,
+          top: lineOffset - EDGE_HOLDER_THICKNESS / 2,
           width: EDGE_HOLDER_LENGTH,
           height: EDGE_HOLDER_THICKNESS,
         }
       : {
-          left: style.width / 2 - EDGE_HOLDER_THICKNESS / 2,
+          left: lineOffset - EDGE_HOLDER_THICKNESS / 2,
           top: style.height / 2 - EDGE_HOLDER_LENGTH / 2,
           width: EDGE_HOLDER_THICKNESS,
           height: EDGE_HOLDER_LENGTH,

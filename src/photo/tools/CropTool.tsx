@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { EditorIcon, type EditorIconName } from '../../core/icons/IconContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
 import { StraightenDial } from '../components/StraightenDial';
 import {
   aspectRatioValue,
@@ -22,10 +23,6 @@ export interface CropToolProps {
   onApply?: () => void;
 }
 
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.6)';
-const SCRIM_BORDER = 'rgba(255,255,255,0.35)';
-
 const ASPECTS: { id: AspectRatio; label?: string }[] = [
   { id: 'free' },
   { id: 'original' },
@@ -37,6 +34,7 @@ const ASPECTS: { id: AspectRatio; label?: string }[] = [
 
 export function CropTool({ controller, imageAspect, allowedAspects, onApply }: CropToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
 
@@ -144,7 +142,7 @@ export function CropTool({ controller, imageAspect, allowedAspects, onApply }: C
               style={[
                 styles.chip,
                 {
-                  borderColor: active ? theme.colors.accent : SCRIM_BORDER,
+                  borderColor: active ? theme.colors.accent : panel.border,
                   backgroundColor: active ? theme.colors.accent : 'transparent',
                   borderRadius: 999,
                   paddingHorizontal: theme.spacing.sm,
@@ -153,7 +151,7 @@ export function CropTool({ controller, imageAspect, allowedAspects, onApply }: C
               ]}>
               <Text
                 style={{
-                  color: active ? theme.colors.onAccent : SCRIM_TEXT,
+                  color: active ? theme.colors.onAccent : panel.text,
                   fontWeight: '600',
                   fontSize: 13,
                   fontVariant: ['tabular-nums'],
@@ -181,7 +179,9 @@ function IconAction({
   muted?: boolean;
   color?: string;
 }) {
-  const resolvedColor = color ?? (muted ? SCRIM_TEXT_MUTED : SCRIM_TEXT);
+  const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
+  const resolvedColor = color ?? (muted ? panel.textMuted : panel.text);
   return (
     <Pressable
       onPress={onPress}

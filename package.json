@@ -1,6 +1,6 @@
 {
   "name": "@dahab-tech/react-native-media-editor",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Customizable photo & video editor for Expo / React Native with RTL support",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -65,7 +65,7 @@
   "bugs": {
     "url": "https://github.com/Dahab-Tech/react-native-media-editor/issues"
   },
-  "author": "DahabTech LLC <dahabtech.llc@gmail.com>",
+  "author": "DahabTech LLC <contact@dahab-tech.com>",
   "license": "MIT",
   "homepage": "https://dahab-tech.com/apps/react-native-media-editor",
   "engines": {

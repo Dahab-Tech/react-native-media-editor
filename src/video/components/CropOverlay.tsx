@@ -16,6 +16,9 @@ export interface CropOverlayProps {
   aspectRatio?: number | null;
 }
 
+/** Breathing room around the video while crop-editing so corner handles never sit at the screen edge (Android back-gesture strip, parent clipping). Must match the inset `VideoEditor` applies to `videoDisplayRect` when crop is active. */
+export const CROP_EDIT_MARGIN = 32;
+
 /** Video crop overlay — thin adapter around the shared `core/crop/CropOverlay`. Handles letterbox math and CropRect ↔ NormalizedCrop conversion. */
 export function CropOverlay({
   videoWidth,
@@ -26,10 +29,13 @@ export function CropOverlay({
 }: CropOverlayProps) {
   const [container, setContainer] = useState<{ width: number; height: number } | null>(null);
 
-  // Letterbox math matches expo-video's `contentFit="contain"` one-for-one.
+  // Contain-fit inside the container minus CROP_EDIT_MARGIN per side — must mirror the
+  // crop-active branch of `videoDisplayRect` in VideoEditor so the frame lands on the video.
   const displayRect = useMemo(() => {
     if (!container || videoWidth <= 0 || videoHeight <= 0) return null;
-    const scale = Math.min(container.width / videoWidth, container.height / videoHeight);
+    const availWidth = Math.max(1, container.width - CROP_EDIT_MARGIN * 2);
+    const availHeight = Math.max(1, container.height - CROP_EDIT_MARGIN * 2);
+    const scale = Math.min(availWidth / videoWidth, availHeight / videoHeight);
     const width = videoWidth * scale;
     const height = videoHeight * scale;
     return {

@@ -12,7 +12,7 @@ import {
 } from '@shopify/react-native-skia';
 import React, { useEffect, useMemo } from 'react';
 import { StyleSheet } from 'react-native';
-import { useSharedValue } from 'react-native-reanimated';
+import { useAnimatedReaction, useSharedValue, type SharedValue } from 'react-native-reanimated';
 
 import {
   anyNonNeutral,
@@ -48,6 +48,10 @@ export interface ColorPreviewCanvasProps {
   paused: boolean;
   /** Seek command for the preview decoder; each new object triggers a seek, even to the same position. */
   seek: { seconds: number } | null;
+  /** UI-thread seek stream in ms — writes here bypass React and drive the decoder directly (rate-sync clock). */
+  seekMs?: SharedValue<number | null> | null;
+  /** Position (ms) the first painted frame must come from; without it the decoder's t=0 frame flashes before the mount seek lands. Captured once at mount. */
+  initialPositionMs?: number;
   /** Full source video dimensions (post-rotation). */
   videoWidth: number;
   videoHeight: number;
@@ -69,6 +73,8 @@ export function ColorPreviewCanvas({
   rect,
   paused,
   seek,
+  seekMs,
+  initialPositionMs,
   videoWidth,
   videoHeight,
   crop,
@@ -88,6 +94,7 @@ export function ColorPreviewCanvas({
   const { currentFrame, rotation, size, duration } = useVideoPreviewFrames(source, {
     paused: pausedSv,
     seek: seekSv,
+    initialSeekMs: initialPositionMs,
   });
 
   // Seeks issued before the decoder loads are dropped natively; the ready dep re-applies the last one.
@@ -95,6 +102,17 @@ export function ColorPreviewCanvas({
   useEffect(() => {
     if (seek != null && decoderReady) seekSv.value = seek.seconds * 1000; // Skia.Video.seek takes ms.
   }, [seek, seekSv, decoderReady]);
+
+  // Mirror the UI-thread seek stream into the internal seekSv on the same runtime — bypasses React so
+  // the rate-sync frame callback can write once per throttle interval without triggering a render.
+  useAnimatedReaction(
+    () => (seekMs ? seekMs.value : null),
+    (ms) => {
+      // eslint-disable-next-line react-hooks/immutability -- shared-value forwarding on the UI runtime; not a React state write.
+      if (ms != null) seekSv.value = ms;
+    },
+    [seekMs]
+  );
 
   const filterDefinition = useMemo(
     () => resolveFilter(filterId, filterPacks),

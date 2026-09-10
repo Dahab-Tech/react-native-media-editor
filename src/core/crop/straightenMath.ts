@@ -63,6 +63,19 @@ export function maxCropScaleForAngle(
   return Math.max(0, Math.min(1, kX, kY));
 }
 
+/** Largest uniform scale of `crop` (aspect preserved) whose rotated bbox fits the image at SOME position — translation is the caller's job. Unlike `maxCropScaleForAngle` this is not anchored to the crop center, so it can exceed 1 (pinch-to-zoom-out). */
+export function maxCropScaleAnywhereForAngle(
+  crop: NormalizedCrop,
+  aspect: number,
+  thetaDeg: number
+): number {
+  if (aspect <= 0 || crop.width <= 0 || crop.height <= 0) return 1;
+  const px = cropToPixelSpace(crop, aspect);
+  const { hw: hwR, hh: hhR } = rotatedBboxHalfExtents(px.width / 2, px.height / 2, thetaDeg);
+  if (hwR <= 0 || hhR <= 0) return 1;
+  return Math.max(1, Math.min(aspect / (2 * hwR), 1 / (2 * hhR)));
+}
+
 /** Shrink-then-translate clamp — the "photo auto-zooms as you rotate" behavior for the straighten dial. */
 export function clampCropForAngle(
   crop: NormalizedCrop,

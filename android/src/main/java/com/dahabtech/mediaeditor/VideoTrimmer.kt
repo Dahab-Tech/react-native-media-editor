@@ -20,6 +20,7 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.SingleColorLut
+import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
@@ -67,14 +68,24 @@ object VideoTrimmer {
 
     val compression = options.compression
     val speedFactor = normalizeSpeed(options.speedFactor)
+    // setSpeed clocks video retiming off the audio pipeline (TimestampAdjustment resolves against
+    // SpeedChangingAudioProcessor); with no audio track that clock never ticks and exports die
+    // with ERROR_CODE_MUXING_TIMEOUT. Audio-less sources retime in the GL chain instead — there
+    // is no audio to desync, which was the only reason to avoid SpeedChangeEffect.
+    val audioDrivenSpeed = speedFactor != null && hasAudioTrack(context, uri)
+    val videoEffects = if (speedFactor != null && !audioDrivenSpeed) {
+      listOf<Effect>(SpeedChangeEffect(speedFactor.toFloat())) + effects
+    } else {
+      effects
+    }
     val editedMediaItem = EditedMediaItem.Builder(mediaItem)
       .apply {
         // buildEffects always emits a Presentation when compression is set, so this suffices.
-        if (effects.isNotEmpty()) {
-          setEffects(Effects(emptyList(), effects))
+        if (videoEffects.isNotEmpty()) {
+          setEffects(Effects(emptyList(), videoEffects))
         }
         // setSpeed retimes BOTH tracks; a video-only SpeedChangeEffect left audio at 1x (desync).
-        if (speedFactor != null) {
+        if (speedFactor != null && audioDrivenSpeed) {
           setSpeed(constantSpeedProvider(speedFactor))
         }
       }
@@ -118,8 +129,9 @@ object VideoTrimmer {
             exportException: ExportException,
           ) {
             outputFile.delete()
+            val message = exportException.message ?: "Export failed"
             promise.reject(
-              MediaEditorException("ERR_TRIM", exportException.message ?: "Export failed")
+              MediaEditorException("ERR_TRIM", "$message (${exportException.errorCodeName})")
             )
           }
         })
@@ -153,10 +165,27 @@ object VideoTrimmer {
       }
     }
 
+    options.washImageUri?.let { washUri ->
+      buildWashEffect(context, washUri, options.washBlendMode, options.washIntensity)?.let {
+        out.add(it)
+      }
+    }
+
     options.overlayImageUri?.let { overlayUri ->
       buildOverlayEffect(context, overlayUri)?.let { out.add(it) }
     }
     return out
+  }
+
+  /** Blend-mode wash stage; nil skips it (unreadable wash is non-fatal, matching overlay handling). */
+  internal fun buildWashEffect(
+    context: Context,
+    washUri: String,
+    blendMode: String?,
+    intensity: Double,
+  ): BlendWashEffect? {
+    val bitmap = decodeBitmap(context, washUri) ?: return null
+    return BlendWashEffect(bitmap, blendMode, intensity.coerceIn(0.0, 1.0).toFloat())
   }
 
   /** Post-crop display size in pixels; falls back to full display when no crop is set. */
@@ -246,8 +275,28 @@ object VideoTrimmer {
     }
   }
 
+  private fun hasAudioTrack(context: Context, uri: String): Boolean {
+    val extractor = MediaExtractor()
+    return try {
+      val parsed = Uri.parse(uri)
+      if (parsed.scheme == null) {
+        extractor.setDataSource(uri)
+      } else {
+        extractor.setDataSource(context, parsed, null)
+      }
+      (0 until extractor.trackCount).any {
+        extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+      }
+    } catch (_: Throwable) {
+      // Unreadable metadata: assume audio exists so a real track is never silently stripped.
+      true
+    } finally {
+      extractor.release()
+    }
+  }
+
   /** Skia 4×5 row-major → Media3 RgbMatrix 4×4 column-major; alpha row dropped, bias collapses into col3. */
-  private fun buildRgbMatrixEffect(m: List<Double>): RgbMatrix? {
+  internal fun buildRgbMatrixEffect(m: List<Double>): RgbMatrix? {
     if (m.size != 20) return null
     val gl = FloatArray(16)
     gl[0] = m[0].toFloat();  gl[1] = m[5].toFloat();  gl[2] = m[10].toFloat(); gl[3] = 0f
@@ -258,7 +307,7 @@ object VideoTrimmer {
   }
 
   /** HALD PNG → Media3 SingleColorLut; Android has no intensity mix so fractional LUTs degrade to full strength. */
-  private fun buildLutEffect(context: Context, lutUri: String): SingleColorLut? {
+  internal fun buildLutEffect(context: Context, lutUri: String): SingleColorLut? {
     val bitmap = decodeBitmap(context, lutUri) ?: return null
     return try {
       SingleColorLut.createFromBitmap(bitmap)

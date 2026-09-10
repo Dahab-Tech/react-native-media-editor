@@ -4,7 +4,30 @@ import CoreImage
 import QuartzCore
 
 struct VideoTrimmer {
+  /// Internal failure type for export-path errors; carries the NSError code so the retry wrapper can gate on -11819 (mediaServicesWereReset).
+  private struct ExportFailure: Error {
+    let message: String
+    let code: Int?
+    var isMediaServicesReset: Bool { code == -11819 }
+  }
+
   static func trim(url: URL, options: TrimOptions) async throws -> [String: Any] {
+    do {
+      return try await trimOnce(url: url, options: options)
+    } catch let failure as ExportFailure {
+      // Apple's documented remedy for mediaServicesWereReset (-11819) is a single retry; any other export error is fatal.
+      guard failure.isMediaServicesReset else {
+        throw MediaEditorError.exportFailed(failure.message)
+      }
+      do {
+        return try await trimOnce(url: url, options: options)
+      } catch let retryFailure as ExportFailure {
+        throw MediaEditorError.exportFailed(retryFailure.message)
+      }
+    }
+  }
+
+  private static func trimOnce(url: URL, options: TrimOptions) async throws -> [String: Any] {
     guard options.startMs >= 0, options.endMs > options.startMs else {
       throw MediaEditorError.invalidTrimRange
     }
@@ -21,15 +44,31 @@ struct VideoTrimmer {
     let colorMatrix: [Double]? = normalizeMatrix(options.colorMatrix)
     let lutImage: CGImage? = options.lutImageUri.flatMap { loadCGImage(fromURIString: $0) }
     let lutIntensity = Float(max(0.0, min(1.0, options.lutIntensity)))
+    let washImage: CGImage? = options.washImageUri.flatMap { loadCGImage(fromURIString: $0) }
+    let washIntensity = Float(max(0.0, min(1.0, options.washIntensity)))
     let speedFactor = options.speedFactor
     let hasSpeedEdit = speedFactor > 0 && abs(speedFactor - 1.0) > 1e-4
-    let hasColorEdit = colorMatrix != nil || lutImage != nil
+    let hasColorEdit = colorMatrix != nil || lutImage != nil || washImage != nil
     let compression = options.compression
 
     // Any non-passthrough edit (crop/overlay/color/speed/compression) forces re-encode; pure trims stay passthrough.
     let needsComposition =
       options.crop != nil || overlayImage != nil || hasColorEdit || hasSpeedEdit
       || compression != nil
+
+    // Sped-up content carries frames at sourceFps × factor after scaleTimeRange; sample the
+    // composition at exactly that rate so every source frame survives (no cap — 60fps at 2x
+    // exports 120fps, matching Android where setSpeed re-times all frames uncapped). The scaled
+    // composition track's own nominalFrameRate is unreliable, so derive from the source asset.
+    let outputFps: Double?
+    if hasSpeedEdit, speedFactor > 1 {
+      let nominal =
+        try await asset.loadTracks(withMediaType: .video).first?.load(.nominalFrameRate) ?? 0
+      let sourceFps = nominal > 0 ? Double(nominal) : 30.0
+      outputFps = sourceFps * speedFactor
+    } else {
+      outputFps = nil
+    }
 
     // Speed changes require AVMutableComposition for scaleTimeRange.
     let workingAsset: AVAsset
@@ -52,7 +91,11 @@ struct VideoTrimmer {
         colorMatrix: colorMatrix,
         lutImage: lutImage,
         lutIntensity: lutIntensity,
-        maxDimension: compression.maxDimension > 0 ? compression.maxDimension : nil)
+        washImage: washImage,
+        washBlendMode: options.washBlendMode,
+        washIntensity: washIntensity,
+        maxDimension: compression.maxDimension > 0 ? compression.maxDimension : nil,
+        outputFps: outputFps)
       if let overlayImage {
         composition.animationTool = makeAnimationTool(
           overlayImage: overlayImage, renderSize: composition.renderSize)
@@ -78,7 +121,11 @@ struct VideoTrimmer {
         colorMatrix: colorMatrix,
         lutImage: lutImage,
         lutIntensity: lutIntensity,
-        maxDimension: nil)
+        washImage: washImage,
+        washBlendMode: options.washBlendMode,
+        washIntensity: washIntensity,
+        maxDimension: nil,
+        outputFps: outputFps)
       if let overlayImage {
         composition.animationTool = makeAnimationTool(
           overlayImage: overlayImage, renderSize: composition.renderSize)
@@ -112,7 +159,7 @@ struct VideoTrimmer {
 
     guard session.status == .completed else {
       try? FileManager.default.removeItem(at: outputURL)
-      throw MediaEditorError.exportFailed(session.error?.localizedDescription ?? "unknown")
+      throw makeExportFailure(session.error, fallback: "unknown")
     }
 
     // Report post-speed-scale duration so the JS caller's UI matches the file on disk.
@@ -163,7 +210,12 @@ struct VideoTrimmer {
     colorMatrix: [Double]?,
     lutImage: CGImage?,
     lutIntensity: Float,
-    maxDimension: Double?
+    washImage: CGImage? = nil,
+    washBlendMode: String? = nil,
+    washIntensity: Float = 1,
+    maxDimension: Double?,
+    outputFps: Double? = nil,
+    compositorType: ColorCompositor.Type = ColorCompositor.self
   ) async throws -> AVMutableVideoComposition {
     guard let track = try await asset.loadTracks(withMediaType: .video).first else {
       throw MediaEditorError.noVideoTrack
@@ -216,20 +268,54 @@ struct VideoTrimmer {
 
     let composition = AVMutableVideoComposition()
     composition.renderSize = renderSize
-    let fps = nominalFrameRate > 0 ? nominalFrameRate : 30
+    let fps = outputFps ?? (nominalFrameRate > 0 ? Double(nominalFrameRate) : 30)
     composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(round(fps)))
     composition.instructions = [instruction]
 
     // AVFoundation instantiates compositors from a class ref; configure the shared holder before install.
-    if colorMatrix != nil || lutImage != nil {
-      ColorCompositor.configure(
+    // Custom compositors receive RAW track pixel buffers (rotation metadata + crop translation live in `layerInstruction`
+    // and are bypassed once the default compositor is replaced). Bake the same transform into the CI pipeline so
+    // portrait-source frames land rotated + cropped identically to the non-color re-encode path.
+    if colorMatrix != nil || lutImage != nil || washImage != nil {
+      compositorType.configure(
         matrix: colorMatrix,
         lutImage: lutImage,
-        lutIntensity: lutIntensity)
-      composition.customVideoCompositorClass = ColorCompositor.self
+        lutIntensity: lutIntensity,
+        washImage: washImage,
+        washBlendMode: washBlendMode,
+        washIntensity: washIntensity,
+        sourceTransform: layerTransform)
+      composition.customVideoCompositorClass = compositorType
     }
 
     return composition
+  }
+
+  /// Preview flavor of the export composition: no crop, capped long edge, PreviewColorCompositor (config slot 1).
+  /// Returns the layer transform too so grade changes can reconfigure the slot without rebuilding the composition.
+  static func makePreviewComposition(
+    asset: AVAsset,
+    colorMatrix: [Double]?,
+    lutImage: CGImage?,
+    lutIntensity: Float,
+    washImage: CGImage? = nil,
+    washBlendMode: String? = nil,
+    washIntensity: Float = 1
+  ) async throws -> (composition: AVMutableVideoComposition, sourceTransform: CGAffineTransform) {
+    let composition = try await makeVideoComposition(
+      asset: asset,
+      crop: nil,
+      colorMatrix: colorMatrix,
+      lutImage: lutImage,
+      lutIntensity: lutIntensity,
+      washImage: washImage,
+      washBlendMode: washBlendMode,
+      washIntensity: washIntensity,
+      maxDimension: 1920,
+      compositorType: PreviewColorCompositor.self)
+    // makeVideoComposition already stashed the layer transform in slot 1; read it back so grade-prop
+    // changes can reconfigure the slot live without recomputing (or drifting from) the export math.
+    return (composition, PreviewColorCompositor.configuredSourceTransform() ?? .identity)
   }
 
   /// Build the CALayer hierarchy for `AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer:in:)`.
@@ -261,7 +347,7 @@ struct VideoTrimmer {
   }
 
   /// Resolve a `file://` or plain-path URI into a CGImage; nil on any failure.
-  private static func loadCGImage(fromURIString uri: String) -> CGImage? {
+  static func loadCGImage(fromURIString uri: String) -> CGImage? {
     let url: URL
     if let parsed = URL(string: uri), parsed.scheme != nil {
       url = parsed
@@ -288,8 +374,10 @@ struct VideoTrimmer {
     guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
       throw MediaEditorError.noVideoTrack
     }
-    let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
-    let fps = nominalFrameRate > 0 ? Double(nominalFrameRate) : 30.0
+    // The composition's frameDuration is the actual output cadence (already speed-adjusted); the
+    // scaled composition track's nominalFrameRate is unreliable for bitrate math.
+    let frameSeconds = CMTimeGetSeconds(videoComposition.frameDuration)
+    let fps = frameSeconds > 0 ? 1.0 / frameSeconds : 30.0
 
     let outputURL = try CacheFile.make(prefix: "trim", fileExtension: "mp4")
 
@@ -297,7 +385,7 @@ struct VideoTrimmer {
     do {
       reader = try AVAssetReader(asset: asset)
     } catch {
-      throw MediaEditorError.exportFailed(error.localizedDescription)
+      throw makeExportFailure(error, fallback: "reader init failed")
     }
     reader.timeRange = timeRange
 
@@ -341,7 +429,7 @@ struct VideoTrimmer {
     do {
       writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
     } catch {
-      throw MediaEditorError.exportFailed(error.localizedDescription)
+      throw makeExportFailure(error, fallback: "writer init failed")
     }
 
     let renderSize = videoComposition.renderSize
@@ -386,10 +474,10 @@ struct VideoTrimmer {
     }
 
     guard reader.startReading() else {
-      throw MediaEditorError.exportFailed(reader.error?.localizedDescription ?? "reader start failed")
+      throw makeExportFailure(reader.error, fallback: "reader start failed")
     }
     guard writer.startWriting() else {
-      throw MediaEditorError.exportFailed(writer.error?.localizedDescription ?? "writer start failed")
+      throw makeExportFailure(writer.error, fallback: "writer start failed")
     }
     writer.startSession(atSourceTime: timeRange.start)
 
@@ -408,7 +496,7 @@ struct VideoTrimmer {
 
     if reader.status == .failed {
       try? FileManager.default.removeItem(at: outputURL)
-      throw MediaEditorError.exportFailed(reader.error?.localizedDescription ?? "read failed")
+      throw makeExportFailure(reader.error, fallback: "read failed")
     }
 
     await withCheckedContinuation { continuation in
@@ -417,7 +505,7 @@ struct VideoTrimmer {
 
     guard writer.status == .completed else {
       try? FileManager.default.removeItem(at: outputURL)
-      throw MediaEditorError.exportFailed(writer.error?.localizedDescription ?? "write failed")
+      throw makeExportFailure(writer.error, fallback: "write failed")
     }
     return outputURL
   }
@@ -445,6 +533,15 @@ struct VideoTrimmer {
         }
       }
     }
+  }
+
+  /// Build an ExportFailure that appends the NSError code (e.g. "Cannot Complete Action (-11819)") so callers can diagnose transient AVFoundation resets.
+  private static func makeExportFailure(_ error: Error?, fallback: String) -> ExportFailure {
+    guard let error else {
+      return ExportFailure(message: fallback, code: nil)
+    }
+    let ns = error as NSError
+    return ExportFailure(message: "\(error.localizedDescription) (\(ns.code))", code: ns.code)
   }
 
   /// Scale factor to cap `size`'s long edge at `maxLongEdge`. Returns 1.0 for null / non-shrinking inputs.
@@ -485,22 +582,62 @@ struct VideoTrimmer {
 // MARK: - Color compositor
 
 /// AVVideoCompositing running each frame through CIColorMatrix + optional CIColorCube.
-final class ColorCompositor: NSObject, AVVideoCompositing {
+class ColorCompositor: NSObject, AVVideoCompositing {
   // MARK: Configuration
 
-  private static var configLock = NSLock()
-  private static var configMatrix: [Double]? = nil
-  private static var configLutImage: CGImage? = nil
-  private static var configLutIntensity: Float = 1.0
-  private static var cachedColorCube: CIFilter? = nil
+  struct Config {
+    let matrix: [Double]?
+    let lutIntensity: Float
+    let sourceTransform: CGAffineTransform
+    let colorCube: CIFilter?
+    let washImage: CIImage?
+    let washBlendMode: String?
+    let washIntensity: Float
+  }
 
-  static func configure(matrix: [Double]?, lutImage: CGImage?, lutIntensity: Float) {
+  private static var configLock = NSLock()
+  private static var configs: [Int: Config] = [:]
+  // Cube construction is expensive (CGContext draw + O(n³) rearrange) — cache per slot by image identity
+  // so intensity-only reconfigures (preview slider drags) don't rebuild it.
+  private static var cubeCache: [Int: (image: CGImage, filter: CIFilter?)] = [:]
+
+  // Slot-keyed config: AVFoundation instantiates compositors from a class ref, so statics are the only channel.
+  // Export (slot 0) and the native graded preview (slot 1, PreviewColorCompositor) can run concurrently.
+  class var configSlot: Int { 0 }
+
+  class func configure(
+    matrix: [Double]?, lutImage: CGImage?, lutIntensity: Float,
+    washImage: CGImage? = nil, washBlendMode: String? = nil, washIntensity: Float = 1,
+    sourceTransform: CGAffineTransform
+  ) {
     configLock.lock()
     defer { configLock.unlock() }
-    configMatrix = matrix
-    configLutImage = lutImage
-    configLutIntensity = lutIntensity
-    cachedColorCube = lutImage.flatMap { makeColorCubeFilter(from: $0) }
+    let colorCube: CIFilter?
+    if let lutImage {
+      if let cached = cubeCache[configSlot], cached.image === lutImage {
+        colorCube = cached.filter
+      } else {
+        colorCube = makeColorCubeFilter(from: lutImage)
+        cubeCache[configSlot] = (lutImage, colorCube)
+      }
+    } else {
+      colorCube = nil
+      cubeCache[configSlot] = nil
+    }
+    configs[configSlot] = Config(
+      matrix: matrix,
+      lutIntensity: lutIntensity,
+      sourceTransform: sourceTransform,
+      colorCube: colorCube,
+      washImage: washImage.map { CIImage(cgImage: $0) },
+      washBlendMode: washBlendMode,
+      washIntensity: washIntensity)
+  }
+
+  class func configuredSourceTransform() -> CGAffineTransform? {
+    configLock.lock()
+    defer { configLock.unlock() }
+    return configs[configSlot]?.sourceTransform
   }
 
   // MARK: AVVideoCompositing
@@ -534,13 +671,26 @@ final class ColorCompositor: NSObject, AVVideoCompositing {
         return
       }
 
-      // CI pipeline: input → matrix → LUT; each stage is optional.
+      // CI pipeline: rotation/crop transform → matrix → LUT; each stage is optional.
       var image = CIImage(cvPixelBuffer: sourceBuffer)
       Self.configLock.lock()
-      let matrix = Self.configMatrix
-      let cube = Self.cachedColorCube
-      let cubeIntensity = Self.configLutIntensity
+      let config = Self.configs[Self.configSlot]
       Self.configLock.unlock()
+      let matrix = config?.matrix
+      let cube = config?.colorCube
+      let cubeIntensity = config?.lutIntensity ?? 1
+      let sourceTransform = config?.sourceTransform ?? .identity
+
+      // Custom compositors receive RAW track buffers; the layer instruction's transform (rotation + crop translation)
+      // is bypassed and must be applied here so portrait sources don't render 90°-rotated into the portrait render buffer.
+      // The transform assumes a top-left origin but Core Image is bottom-left — conjugate with vertical flips
+      // (source height in, render height out) or rotations run backwards (90° source exported 180°-off).
+      if !sourceTransform.isIdentity {
+        let renderHeight = request.renderContext.size.height
+        let flipSrc = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: image.extent.height)
+        let flipDst = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: renderHeight)
+        image = image.transformed(by: flipSrc.concatenating(sourceTransform).concatenating(flipDst))
+      }
 
       if let matrix, matrix.count == 20, let matrixFilter = makeColorMatrixFilter(from: matrix) {
         matrixFilter.setValue(image, forKey: kCIInputImageKey)
@@ -552,35 +702,75 @@ final class ColorCompositor: NSObject, AVVideoCompositing {
         cube.setValue(image, forKey: kCIInputImageKey)
         if let cubed = cube.outputImage {
           // Mix cubed with un-cubed per lutIntensity — mirrors the LUT SkSL shader's `intensity` uniform.
-          if abs(cubeIntensity - 1.0) < 1e-4 {
-            image = cubed
-          } else if let dissolve = CIFilter(name: "CIDissolveTransition") {
-            dissolve.setValue(image, forKey: kCIInputImageKey)
-            dissolve.setValue(cubed, forKey: kCIInputTargetImageKey)
-            dissolve.setValue(cubeIntensity, forKey: kCIInputTimeKey)
-            if let out = dissolve.outputImage {
-              image = out
-            }
-          } else {
-            image = cubed
+          image = mixImages(base: image, target: cubed, amount: cubeIntensity)
+        }
+      }
+
+      let renderSize = request.renderContext.size
+
+      // Overlay wash: blend against the graded frame with the pack's CI blend filter — matches the
+      // Skia preview's `blendMode` + `opacity` draw. Alpha-pasting the wash instead looks like a mask.
+      if let wash = config?.washImage, (config?.washIntensity ?? 0) > 1e-4 {
+        let scaled = wash.transformed(by: CGAffineTransform(
+          scaleX: renderSize.width / wash.extent.width,
+          y: renderSize.height / wash.extent.height))
+        if let blend = CIFilter(name: ciBlendFilterName(config?.washBlendMode)) {
+          blend.setValue(scaled, forKey: kCIInputImageKey)
+          blend.setValue(image, forKey: kCIInputBackgroundImageKey)
+          if let blended = blend.outputImage {
+            image = mixImages(base: image, target: blended, amount: config?.washIntensity ?? 1)
           }
         }
       }
 
-      self.ciContext.render(image, to: dst)
+      // Explicit bounds: after transform the CIImage extent can be negative/shifted; render the renderContext-sized region at (0,0).
+      let bounds = CGRect(origin: .zero, size: renderSize)
+      self.ciContext.render(image, to: dst, bounds: bounds, colorSpace: nil)
       request.finish(withComposedVideoFrame: dst)
     }
+  }
+}
+
+/// Same pipeline as export, isolated to config slot 1 so a live preview never clobbers an in-flight export.
+final class PreviewColorCompositor: ColorCompositor {
+  override class var configSlot: Int { 1 }
+}
+
+/// Linear mix of two images via CIDissolveTransition (amount 0 = base, 1 = target).
+private func mixImages(base: CIImage, target: CIImage, amount: Float) -> CIImage {
+  if amount >= 1.0 - 1e-4 { return target }
+  if amount <= 1e-4 { return base }
+  guard let dissolve = CIFilter(name: "CIDissolveTransition") else { return target }
+  dissolve.setValue(base, forKey: kCIInputImageKey)
+  dissolve.setValue(target, forKey: kCIInputTargetImageKey)
+  dissolve.setValue(amount, forKey: kCIInputTimeKey)
+  return dissolve.outputImage ?? target
+}
+
+/// Map a Skia blend-mode name to the equivalent Core Image blend filter.
+private func ciBlendFilterName(_ mode: String?) -> String {
+  switch mode {
+  case "screen": return "CIScreenBlendMode"
+  case "softLight": return "CISoftLightBlendMode"
+  case "hardLight": return "CIHardLightBlendMode"
+  case "multiply": return "CIMultiplyBlendMode"
+  case "lighten": return "CILightenBlendMode"
+  case "darken": return "CIDarkenBlendMode"
+  case "colorDodge": return "CIColorDodgeBlendMode"
+  case "colorBurn": return "CIColorBurnBlendMode"
+  default: return "CIOverlayBlendMode"
   }
 }
 
 /// Build a CIColorMatrix filter from the Skia 20-float row-major 4×5 matrix.
 private func makeColorMatrixFilter(from m: [Double]) -> CIFilter? {
   guard m.count == 20, let filter = CIFilter(name: "CIColorMatrix") else { return nil }
-  // CIColorMatrix takes INPUT vectors, so transpose Skia rows into columns.
-  let rVector = CIVector(x: CGFloat(m[0]), y: CGFloat(m[5]), z: CGFloat(m[10]), w: CGFloat(m[15]))
-  let gVector = CIVector(x: CGFloat(m[1]), y: CGFloat(m[6]), z: CGFloat(m[11]), w: CGFloat(m[16]))
-  let bVector = CIVector(x: CGFloat(m[2]), y: CGFloat(m[7]), z: CGFloat(m[12]), w: CGFloat(m[17]))
-  let aVector = CIVector(x: CGFloat(m[3]), y: CGFloat(m[8]), z: CGFloat(m[13]), w: CGFloat(m[18]))
+  // CIColorMatrix computes output.r = dot(source, rVector) + bias.r — each vector IS a Skia row
+  // (the "input" prefix is CI parameter naming, not "per input channel"). Do NOT transpose.
+  let rVector = CIVector(x: CGFloat(m[0]), y: CGFloat(m[1]), z: CGFloat(m[2]), w: CGFloat(m[3]))
+  let gVector = CIVector(x: CGFloat(m[5]), y: CGFloat(m[6]), z: CGFloat(m[7]), w: CGFloat(m[8]))
+  let bVector = CIVector(x: CGFloat(m[10]), y: CGFloat(m[11]), z: CGFloat(m[12]), w: CGFloat(m[13]))
+  let aVector = CIVector(x: CGFloat(m[15]), y: CGFloat(m[16]), z: CGFloat(m[17]), w: CGFloat(m[18]))
   let biasVector = CIVector(x: CGFloat(m[4]), y: CGFloat(m[9]), z: CGFloat(m[14]), w: CGFloat(m[19]))
   filter.setValue(rVector, forKey: "inputRVector")
   filter.setValue(gVector, forKey: "inputGVector")

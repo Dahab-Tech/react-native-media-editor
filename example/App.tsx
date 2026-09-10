@@ -8,6 +8,7 @@ import {
   type ThumbnailResult,
   type TrimResult,
 } from '@dahab-tech/react-native-media-editor/videoEditor';
+import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import * as SplashScreen from 'expo-splash-screen';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -211,25 +212,16 @@ const formatBytes = (bytes: number): string =>
     ? `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     : `${Math.round(bytes / 1024)} KB`;
 
-// blob.size avoids an expo-file-system dependency just for stat.
-async function fileSizeBytes(uri: string): Promise<number> {
-  const response = await fetch(uri);
-  const blob = await response.blob();
-  return blob.size;
-}
-
 function useFileSize(uri: string): string | null {
   const [size, setSize] = useState<string | null>(null);
   useEffect(() => {
-    let cancelled = false;
-    fileSizeBytes(uri)
-      .then((bytes) => {
-        if (!cancelled) setSize(formatBytes(bytes));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const bytes = new File(uri).size;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reading external filesystem state, not deriving from props.
+      setSize(bytes != null ? formatBytes(bytes) : null);
+    } catch {
+      setSize(null);
+    }
   }, [uri]);
   return size;
 }

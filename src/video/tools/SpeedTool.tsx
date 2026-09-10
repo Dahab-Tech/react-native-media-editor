@@ -4,6 +4,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRtlHorizontalScrollLanding } from '../../core/hooks/useRtlHorizontalScrollLanding';
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette } from '../../core/theming/theme';
 import { Slider } from '../../photo/components/Slider';
 import {
   VIDEO_SPEED_DEFAULT,
@@ -17,13 +18,6 @@ export interface SpeedToolProps {
   controller: VideoEditorController;
 }
 
-// On-scrim tokens: use white-alpha (not theme tokens, which flip in light mode).
-const SCRIM_TEXT = '#FFFFFF';
-const SCRIM_TEXT_MUTED = 'rgba(255,255,255,0.6)';
-const SCRIM_CHIP_BG = 'rgba(255,255,255,0.08)';
-const SCRIM_CHIP_BG_ACTIVE = 'rgba(255,255,255,0.16)';
-const SCRIM_BORDER = 'rgba(255,255,255,0.35)';
-
 const CHIP_HEIGHT = 32;
 const CHIP_MIN_WIDTH = 56;
 const CHIP_HIT_SLOP = 8;
@@ -31,6 +25,7 @@ const CHIP_HIT_SLOP = 8;
 /** Playback-speed panel — preset chip row above a fine-grain slider. */
 export function SpeedTool({ controller }: SpeedToolProps) {
   const theme = useEditorTheme();
+  const panel = getPanelPalette(theme);
   const { t, isRTL } = useEditorI18n();
   const { state, dispatch } = controller;
   const [setChipRowRef, onChipRowContentSizeChange] = useRtlHorizontalScrollLanding();
@@ -69,14 +64,14 @@ export function SpeedTool({ controller }: SpeedToolProps) {
                   height: CHIP_HEIGHT,
                   borderRadius: theme.radius.md,
                   paddingHorizontal: theme.spacing.sm,
-                  backgroundColor: active ? SCRIM_CHIP_BG_ACTIVE : SCRIM_CHIP_BG,
+                  backgroundColor: active ? panel.chipBgActive : panel.chipBg,
                   borderColor: active ? theme.colors.accent : 'transparent',
                 },
               ]}>
               <Text
                 numberOfLines={1}
                 style={{
-                  color: active ? SCRIM_TEXT : SCRIM_TEXT_MUTED,
+                  color: active ? panel.text : panel.textMuted,
                   fontSize: 12,
                   fontWeight: active ? '700' : '500',
                 }}>
@@ -115,14 +110,14 @@ export function SpeedTool({ controller }: SpeedToolProps) {
           style={[
             styles.resetAll,
             {
-              borderColor: SCRIM_BORDER,
+              borderColor: panel.border,
               borderRadius: theme.radius.md,
               paddingHorizontal: theme.spacing.md,
               paddingVertical: theme.spacing.xs,
               opacity: isDefault ? 0.5 : 1,
             },
           ]}>
-          <Text style={{ color: SCRIM_TEXT_MUTED, fontSize: 12 }}>{t('reset')}</Text>
+          <Text style={{ color: panel.textMuted, fontSize: 12 }}>{t('reset')}</Text>
         </Pressable>
       </View>
     </View>

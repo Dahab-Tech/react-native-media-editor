@@ -16,6 +16,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
   FadeIn,
   useAnimatedStyle,
+  useFrameCallback,
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
@@ -28,6 +29,7 @@ import { useConsumeAndroidBack } from '../core/hooks/useConsumeAndroidBack';
 import { useEditorI18n } from '../core/i18n/I18nContext';
 import { EditorIcon, type EditorIconName } from '../core/icons/IconContext';
 import { useEditorTheme } from '../core/theming/ThemeContext';
+import { getPanelPalette } from '../core/theming/theme';
 import MediaEditorModule from '../native/MediaEditorModule';
 import {
   anyNonNeutral,
@@ -49,8 +51,9 @@ import {
   type PhotoStickerPack,
   type TextLayer,
 } from '../photo/layers';
-import { resolveOverlay, type PhotoOverlayPack } from '../photo/overlays';
+import { OverlayLayer, resolveOverlay, type PhotoOverlayPack } from '../photo/overlays';
 import { ColorPreviewCanvas } from './components/ColorPreviewCanvas';
+import { NativeGradedPreview } from './components/NativeGradedPreview';
 import { ScrubEnginePreview } from './components/ScrubEnginePreview';
 import { ScrubFrameOverlay } from './components/ScrubFrameOverlay';
 import {
@@ -79,7 +82,7 @@ import type {
 import { getVideoInfo, getVideoThumbnail, trimVideo } from './api';
 import { CoverPicker } from './components/CoverPicker';
 import { CropAspectPicker } from './components/CropAspectPicker';
-import { CropOverlay } from './components/CropOverlay';
+import { CROP_EDIT_MARGIN, CropOverlay } from './components/CropOverlay';
 import { TrimBar } from './components/TrimBar';
 import { VideoOverlayRender } from './components/VideoOverlayRender';
 import {
@@ -229,33 +232,80 @@ function VideoEditorScreen({
   });
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
 
-  // Mirror `speed` onto player.playbackRate so live preview matches export.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/immutability -- expo-video's player exposes playbackRate as a mutable property; assignment is the intended API.
-    player.playbackRate = state.speed;
-  }, [player, state.speed]);
-
   // Re-seek command for the Skia color preview, whose decoder free-runs otherwise.
   const [syncSeek, setSyncSeek] = useState<{ seconds: number } | null>(null);
 
-  // Loop preview inside the (draft or committed) trim range — native loop=true only wraps the full file.
-  const loopRange = pendingRange ?? state.range;
+  // Playback clock: JS writes {playerTimeMs, epochMs, rate, loopStartMs, loopEndMs} on each timeUpdate (4 Hz);
+  // UI-thread frame callbacks extrapolate position between ticks. Two consumers: the rate-sync decoder drive
+  // (speed ≠ 1) and the trim-bar playhead. This replaces per-tick setState (React churn) and 4 Hz stepping.
+  const playbackClock = useSharedValue<{
+    playerTimeMs: number;
+    epochMs: number;
+    rate: number;
+    loopStartMs: number;
+    loopEndMs: number;
+  } | null>(null);
+  const rateSyncSeekMs = useSharedValue<number | null>(null);
+  const rateSyncLastWriteMs = useSharedValue(0);
+  // Trim-bar playhead position; driven by the frame callback while playing, written directly on pause/scrub.
+  const playheadMs = useSharedValue(0);
+
+  // Mirror `speed` onto player.playbackRate so live preview matches export; snap the Skia decoder to the player
+  // clock across the transition so re-entering 1x (free-running Skia) or exiting 1x (seek-driven Skia) starts in sync.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/immutability -- expo-video's documented way to enable timeUpdate events.
+    // eslint-disable-next-line react-hooks/immutability -- expo-video's player exposes playbackRate as a mutable property; assignment is the intended API.
+    player.playbackRate = state.speed;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot re-sync at the rate change; not a derived state loop.
+    setSyncSeek({ seconds: player.currentTime });
+  }, [player, state.speed]);
+
+  // Loop preview inside the (draft or committed) trim range — native loop=true only wraps the full file.
+  // At speed ≠ 1 the Skia decoder is driven by the UI-thread extrapolation clock (see the useFrameCallback below);
+  // this effect only owns loop wrap and refreshing the clock snapshot from the player's 4 Hz timeUpdate.
+  const loopRange = pendingRange ?? state.range;
+  const speed = state.speed;
+  /* eslint-disable react-hooks/immutability -- expo-video exposes player state as mutable properties (documented); shared-value writes are the reanimated JS→UI API, not derived state. */
+  useEffect(() => {
     player.timeUpdateEventInterval = 0.25;
     const startS = loopRange.startMs / 1000;
     const endS = loopRange.endMs / 1000;
+    const snapshotClock = (playerTimeMs: number) => {
+      playbackClock.value = {
+        playerTimeMs,
+        epochMs: performance.now(),
+        rate: speed,
+        loopStartMs: loopRange.startMs,
+        loopEndMs: loopRange.endMs,
+      };
+    };
     const subscription = player.addListener('timeUpdate', ({ currentTime }) => {
       if (!player.playing || endS <= startS) return;
       // Below start happens when the native full-file loop wraps to 0.
       if (currentTime >= endS || currentTime < startS - 0.25) {
         player.currentTime = startS;
-        // Keep the Skia preview decoder in lockstep across the loop jump.
+        // Keep the free-running (1x) Skia preview decoder in lockstep across the loop jump.
         setSyncSeek({ seconds: startS });
+        // Re-baseline so the UI-thread extrapolators restart from loop start immediately —
+        // otherwise they'd keep extrapolating past endMs until the next 250 ms tick.
+        snapshotClock(startS * 1000);
+        return;
       }
+      // One setState-free write per tick; the frame callbacks consume it.
+      snapshotClock(currentTime * 1000);
     });
-    return () => subscription.remove();
-  }, [player, loopRange.startMs, loopRange.endMs]);
+    // Re-baseline on resume (timeUpdate is silent while paused, so the last snapshot's epoch is pause-stale)
+    // and pin the playhead to the exact pause position.
+    const playingSubscription = player.addListener('playingChange', ({ isPlaying: playing }) => {
+      const nowMs = player.currentTime * 1000;
+      playheadMs.value = nowMs;
+      if (playing) snapshotClock(nowMs);
+    });
+    return () => {
+      subscription.remove();
+      playingSubscription.remove();
+    };
+  }, [player, loopRange.startMs, loopRange.endMs, speed, playbackClock, playheadMs]);
+  /* eslint-enable react-hooks/immutability */
 
   const onErrorRef = useRef(onError);
   useEffect(() => {
@@ -379,9 +429,12 @@ function VideoEditorScreen({
     }
     const showCropped = state.crop != null && !cropActive;
     if (!showCropped) {
+      // Crop-editing insets the video by CROP_EDIT_MARGIN so corner handles stay grabbable
+      // at screen edges; must mirror the letterbox math in video/components/CropOverlay.
+      const inset = cropActive ? CROP_EDIT_MARGIN : 0;
       const scale = Math.min(
-        videoContainer.width / info.width,
-        videoContainer.height / info.height
+        Math.max(1, videoContainer.width - inset * 2) / info.width,
+        Math.max(1, videoContainer.height - inset * 2) / info.height
       );
       const width = info.width * scale;
       const height = info.height * scale;
@@ -473,6 +526,8 @@ function VideoEditorScreen({
     (timeMs: number) => {
       const seconds = timeMs / 1000;
       lastScrubSecondsRef.current = seconds;
+      // eslint-disable-next-line react-hooks/immutability -- shared-value write is the reanimated JS→UI API; keeps the playhead on the dragged handle.
+      playheadMs.value = timeMs;
       scrubFrameListenerRef.current?.(timeMs);
       const now = Date.now();
       const elapsed = now - scrubLastSeekAtRef.current;
@@ -490,7 +545,7 @@ function VideoEditorScreen({
       // setState only on the first tick — subsequent ticks would re-render the whole editor at 60fps and stall the handle.
       setScrubSeconds((prev) => (prev != null ? prev : seconds));
     },
-    [player]
+    [player, playheadMs]
   );
 
   const handleScrubEnd = useCallback(() => {
@@ -592,12 +647,11 @@ function VideoEditorScreen({
     exportOverlayDefinition?.kind === 'image' ? exportOverlayDefinition.source : undefined
   );
 
-  // Rasterize overlay (color wash + layers + strokes) to a cache PNG the native trimmer composites over frames.
+  // Rasterize annotations (layers + strokes) to a cache PNG the native trimmer alpha-pastes over frames.
+  // The overlay wash ships separately (rasterizeWash): alpha paste can't express its blend mode.
   const rasterizeOverlay = useCallback(async (): Promise<string | null> => {
     if (!info) return null;
-    const hasAnnotations = state.layers.length > 0 || state.strokes.length > 0;
-    const hasOverlayWash = exportOverlayDefinition != null && state.overlayIntensity > 0;
-    if (!hasAnnotations && !hasOverlayWash) return null;
+    if (state.layers.length === 0 && state.strokes.length === 0) return null;
 
     const crop = state.crop;
     const outW = Math.round(crop ? crop.width : info.width);
@@ -619,9 +673,6 @@ function VideoEditorScreen({
         customFonts={customFonts}
         customFontTypefaces={customFontTypefaces}
         stickerPacks={stickerPacks}
-        overlayDefinition={hasOverlayWash ? exportOverlayDefinition : null}
-        overlayIntensity={state.overlayIntensity}
-        overlayImage={exportOverlayImage}
       />,
       { width: outW, height: outH }
     );
@@ -635,38 +686,73 @@ function VideoEditorScreen({
     state.crop,
     state.layers,
     state.strokes,
-    state.overlayIntensity,
     stickerImages,
     customFonts,
     customFontTypefaces,
     stickerPacks,
-    exportOverlayDefinition,
-    exportOverlayImage,
   ]);
+
+  // Rasterize the overlay wash alone at full strength; native blends it per frame with the pack's
+  // blend mode + intensity (blend modes need the video frame underneath, which JS never has).
+  const rasterizeWash = useCallback(
+    async (outW: number, outH: number): Promise<string | null> => {
+      if (exportOverlayDefinition == null || outW <= 0 || outH <= 0) return null;
+      const snapshot = await drawAsImage(
+        <OverlayLayer
+          definition={exportOverlayDefinition}
+          rect={{ x: 0, y: 0, width: outW, height: outH }}
+          intensity={1}
+          image={exportOverlayImage ?? null}
+        />,
+        { width: outW, height: outH }
+      );
+      if (!snapshot) return null;
+      const encoded = snapshot.encodeToBase64(ImageFormat.PNG, 100);
+      if (!encoded) return null;
+      return await MediaEditorModule.writeCacheFile(encoded, 'png');
+    },
+    [exportOverlayDefinition, exportOverlayImage]
+  );
+
+  // Compose the 4×5 matrix JS-side; native applies one stage per frame or short-circuits when identity.
+  // Shared by export AND the native graded preview so both feed the identical grade to the native pipeline.
+  const gradeParams = useMemo(() => {
+    const filterDefinition = resolveFilter(state.filterId, filterPacks);
+    const adjustmentsMatrix = composeAdjustmentMatrix(state.adjustments);
+    const composedMatrix =
+      filterDefinition.kind === 'matrix' && filterDefinition.id !== ORIGINAL_FILTER_ID
+        ? composeFilterMatrix(filterDefinition.matrix, adjustmentsMatrix, state.filterIntensity)
+        : adjustmentsMatrix;
+    const includeMatrix = !isIdentityMatrix(composedMatrix);
+
+    // Only string-URI LUT sources round-trip across the bridge; numeric handles / remote records are deferred.
+    let lutImageUri: string | undefined;
+    let lutIntensity: number | undefined;
+    if (filterDefinition.kind === 'lut' && typeof filterDefinition.source === 'string') {
+      lutImageUri = filterDefinition.source;
+      lutIntensity = state.filterIntensity;
+    }
+    return {
+      colorMatrix: includeMatrix ? (composedMatrix as number[]) : undefined,
+      lutImageUri,
+      lutIntensity,
+    };
+  }, [state.filterId, state.filterIntensity, state.adjustments, filterPacks]);
 
   const handleTrim = useCallback(async () => {
     if (!info) return;
     setBusy(true);
     try {
       const overlayImageUri = (await rasterizeOverlay()) ?? undefined;
-      // Compose the 4×5 matrix JS-side; native applies one stage per frame or short-circuits when identity.
-      const filterDefinition = resolveFilter(state.filterId, filterPacks);
-      const adjustmentsMatrix = composeAdjustmentMatrix(state.adjustments);
-      const composedMatrix =
-        filterDefinition.kind === 'matrix' && filterDefinition.id !== ORIGINAL_FILTER_ID
-          ? composeFilterMatrix(filterDefinition.matrix, adjustmentsMatrix, state.filterIntensity)
-          : adjustmentsMatrix;
-      const matrixNumbers = composedMatrix as number[];
-      const includeMatrix = !isIdentityMatrix(composedMatrix);
-
-      // Only string-URI LUT sources round-trip across the bridge; numeric handles / remote records are deferred.
-      let lutImageUri: string | undefined;
-      let lutIntensity: number | undefined;
-      if (filterDefinition.kind === 'lut' && typeof filterDefinition.source === 'string') {
-        lutImageUri = filterDefinition.source;
-        lutIntensity = state.filterIntensity;
-      }
-
+      // Wash is applied post-crop natively, so rasterize at the post-crop output size.
+      const washImageUri =
+        state.overlayIntensity > 0
+          ? ((await rasterizeWash(
+              Math.round(state.crop ? state.crop.width : info.width),
+              Math.round(state.crop ? state.crop.height : info.height)
+            )) ?? undefined)
+          : undefined;
+      const { colorMatrix, lutImageUri, lutIntensity } = gradeParams;
       const speedFactor = state.speed !== VIDEO_SPEED_DEFAULT ? state.speed : undefined;
 
       // WYSIWYG: an unconfirmed draft is what the trim bar shows, so export honors it.
@@ -676,7 +762,10 @@ function VideoEditorScreen({
         endMs: range.endMs,
         crop: state.crop ?? undefined,
         overlayImageUri,
-        colorMatrix: includeMatrix ? matrixNumbers : undefined,
+        washImageUri,
+        washBlendMode: washImageUri ? exportOverlayDefinition?.blendMode : undefined,
+        washIntensity: washImageUri ? state.overlayIntensity : undefined,
+        colorMatrix,
         lutImageUri,
         lutIntensity,
         speedFactor,
@@ -702,15 +791,15 @@ function VideoEditorScreen({
     pendingRange,
     state.range,
     state.crop,
-    state.filterId,
-    state.filterIntensity,
-    state.adjustments,
     state.speed,
-    filterPacks,
+    state.overlayIntensity,
+    gradeParams,
     onExport,
     onCoverSelected,
     reportError,
     rasterizeOverlay,
+    rasterizeWash,
+    exportOverlayDefinition,
     compression,
   ]);
 
@@ -756,20 +845,111 @@ function VideoEditorScreen({
     };
   }, [source]);
 
-  // Two-surface: native VideoView base; Skia fades in only when pipeline active, not scrubbing, and speed=1 (Skia has no rate control / reliable re-seek).
-  const skiaOpacityTarget =
-    colorPipelineActive && scrubSeconds == null && (state.speed === 1 || !isPlaying) ? 1 : 0;
-  // Skia's useVideo pumps frames on the UI thread (same one as touches) — pause while hidden or panels' taps starve; snap to player on fade-in.
-  const skiaDecoderPaused = !isPlaying || skiaOpacityTarget === 0;
+  // Two-surface: native VideoView base; Skia fades in whenever pipeline is active and not scrubbing.
+  // At speed ≠ 1 Skia has no rate control — we pause its decoder and drive it from the UI-thread extrapolation
+  // clock (rateSyncDrive below); keeping it visible preserves WYSIWYG so effects don't "drop" mid-playback.
+  const skiaOpacityTarget = colorPipelineActive && scrubSeconds == null ? 1 : 0;
+  const rateSynced = state.speed !== VIDEO_SPEED_DEFAULT;
+  // At speed ≠ 1 swap the Skia canvas for the native rate-controlled preview (AVPlayerLooper / ExoPlayer
+  // running the export's own color pipeline, wash included). Any native error falls back for the session.
+  const [nativePreviewFailed, setNativePreviewFailed] = useState(false);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset per-source fallback latch, not a derivation.
+    setNativePreviewFailed(false);
+  }, [source]);
+  // Full-frame wash raster for the native preview (its composition has no crop; the view clips instead).
+  // Intensity rides a native prop, so slider drags never re-rasterize.
+  const [previewWashUri, setPreviewWashUri] = useState<string | null>(null);
+  useEffect(() => {
+    if (!info || exportOverlayDefinition == null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- clearing an async raster result, not a derivation.
+      setPreviewWashUri(null);
+      return;
+    }
+    let cancelled = false;
+    rasterizeWash(Math.round(info.width), Math.round(info.height))
+      .then((uri) => {
+        if (!cancelled) setPreviewWashUri(uri);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [info, exportOverlayDefinition, rasterizeWash]);
+  // Overlay active but wash raster not landed yet → stay on the Skia path until it does (no wash-less flash).
+  const nativeRatePreviewActive =
+    rateSynced &&
+    colorPreviewMounted &&
+    !nativePreviewFailed &&
+    (state.overlayId == null || previewWashUri != null);
+  // Transition-only sync: the native preview free-runs its own looping clock; align it to the primary
+  // player on activation and on play/pause flips instead of driving it continuously.
+  const [nativeSyncPositionMs, setNativeSyncPositionMs] = useState(-1);
+  useEffect(() => {
+    if (!nativeRatePreviewActive) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- snapshotting the imperative player clock on transitions.
+    setNativeSyncPositionMs(player.currentTime * 1000);
+  }, [nativeRatePreviewActive, isPlaying, player]);
+  // Skia's frame pump ticks on the UI thread — pause while hidden or panels' taps starve; snap to player on fade-in.
+  // Also pause when the rate-sync clock is driving the decoder (speed ≠ 1), so it doesn't free-run at 1x.
+  const skiaDecoderPaused = !isPlaying || skiaOpacityTarget === 0 || rateSynced;
+  useEffect(() => {
+    // Also keyed on the native↔Skia handoff: leaving the native rate preview remounts the canvas with a
+    // fresh decoder at frame 0, which needs the same position snap as a fade-in.
+    if (skiaOpacityTarget !== 1 || nativeRatePreviewActive) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing the external Skia decoder to the imperative player clock, not deriving state
-    if (skiaOpacityTarget === 1) setSyncSeek({ seconds: player.currentTime });
-  }, [skiaOpacityTarget, player]);
+    setSyncSeek({ seconds: player.currentTime });
+  }, [skiaOpacityTarget, nativeRatePreviewActive, player]);
   const skiaOpacity = useSharedValue(skiaOpacityTarget);
   useEffect(() => {
     skiaOpacity.value = withTiming(skiaOpacityTarget, { duration: 250 });
   }, [skiaOpacityTarget, skiaOpacity]);
   const skiaAnimatedStyle = useAnimatedStyle(() => ({ opacity: skiaOpacity.value }));
+
+  // AVFoundation exact-seeks are cheap and the frame pump converges quickly, so iOS can drive at ~30 Hz.
+  // Android's Skia.Video wraps MediaPlayer where seeks flush the codec — keep the write cadence coarser (~120 ms)
+  // so we don't churn the decoder faster than it can produce frames.
+  const rateSyncIntervalMs = Platform.OS === 'ios' ? 33 : 120;
+  // UI-thread extrapolation clock: reads the JS-written snapshot, extrapolates pos = t0 + (now - epoch) * rate,
+  // clamps to the loop range, and writes ms into rateSyncSeekMs at the platform cadence. Active only during
+  // rate-synced playback with the color preview visible — otherwise the drive is a no-op and the callback stops.
+  const rateSyncDriveActive =
+    rateSynced &&
+    isPlaying &&
+    colorPreviewMounted &&
+    skiaOpacityTarget === 1 &&
+    !nativeRatePreviewActive;
+  const rateSyncDrive = useFrameCallback((frame) => {
+    'worklet';
+    const snap = playbackClock.value;
+    if (snap == null) return;
+    const now = frame.timestamp;
+    let pos = snap.playerTimeMs + (now - snap.epochMs) * snap.rate;
+    if (pos > snap.loopEndMs) pos = snap.loopEndMs;
+    else if (pos < snap.loopStartMs) pos = snap.loopStartMs;
+    if (now - rateSyncLastWriteMs.value < rateSyncIntervalMs) return;
+    rateSyncLastWriteMs.value = now;
+    rateSyncSeekMs.value = pos;
+  }, false);
+  useEffect(() => {
+    rateSyncDrive.setActive(rateSyncDriveActive);
+  }, [rateSyncDriveActive, rateSyncDrive]);
+
+  // Playhead drive: same clock, every frame (a 3 px line doesn't need throttling), only while the trim bar shows.
+  const playheadDriveActive = isPlaying && trimBarVisible && !cropActive;
+  const playheadDrive = useFrameCallback((frame) => {
+    'worklet';
+    const snap = playbackClock.value;
+    if (snap == null) return;
+    let pos = snap.playerTimeMs + (frame.timestamp - snap.epochMs) * snap.rate;
+    if (pos > snap.loopEndMs) pos = snap.loopEndMs;
+    else if (pos < snap.loopStartMs) pos = snap.loopStartMs;
+    // eslint-disable-next-line react-hooks/immutability -- shared-value write on the UI runtime, the reanimated API; not a React state write.
+    playheadMs.value = pos;
+  }, false);
+  useEffect(() => {
+    playheadDrive.setActive(playheadDriveActive);
+  }, [playheadDriveActive, playheadDrive]);
 
   return (
     // useSafeAreaInsets() applies on first frame — native SafeAreaView re-measures after first paint on Android, causing a jump.
@@ -817,13 +997,40 @@ function VideoEditorScreen({
           displayRect={videoDisplayRect}
           hidden={nativeVideoHidden}
         />
-        {colorPreviewMounted && (
+        {colorPreviewMounted && nativeRatePreviewActive && (
+          <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, skiaAnimatedStyle]}>
+            <NativeGradedPreview
+              source={source}
+              info={info}
+              crop={cropActive ? null : state.crop}
+              displayRect={videoDisplayRect}
+              startMs={(pendingRange ?? state.range).startMs}
+              endMs={(pendingRange ?? state.range).endMs}
+              colorMatrix={gradeParams.colorMatrix}
+              lutUri={gradeParams.lutImageUri}
+              lutIntensity={gradeParams.lutIntensity}
+              washUri={state.overlayId != null ? (previewWashUri ?? undefined) : undefined}
+              washBlendMode={exportOverlayDefinition?.blendMode}
+              washIntensity={state.overlayIntensity}
+              rate={state.speed}
+              paused={!isPlaying}
+              positionMs={nativeSyncPositionMs}
+              onFallback={() => setNativePreviewFailed(true)}
+            />
+          </Animated.View>
+        )}
+        {colorPreviewMounted && !nativeRatePreviewActive && (
           <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, skiaAnimatedStyle]}>
             <ColorPreviewCanvas
               source={source}
               rect={videoDisplayRect}
               paused={skiaDecoderPaused}
               seek={scrubSeek ?? syncSeek}
+              seekMs={rateSyncSeekMs}
+              initialPositionMs={Math.min(
+                Math.max(player.currentTime * 1000, loopRange.startMs),
+                loopRange.endMs
+              )}
               // Raw source dims; crop clipping handled internally via the `crop` prop.
               videoWidth={info.width}
               videoHeight={info.height}
@@ -977,6 +1184,7 @@ function VideoEditorScreen({
               label={t('cancel')}
               onPress={cancelTrim}
               disabled={busy}
+              onScrim
             />
             <CompactIconAction
               iconName="check"
@@ -984,6 +1192,7 @@ function VideoEditorScreen({
               onPress={applyTrim}
               emphasized
               disabled={busy}
+              onScrim
             />
           </View>
         )}
@@ -1041,6 +1250,7 @@ function VideoEditorScreen({
           startMs={pendingRange?.startMs ?? state.range.startMs}
           endMs={pendingRange?.endMs ?? state.range.endMs}
           minDurationMs={minDurationMs}
+          playheadMs={playheadMs}
           onChange={(startMs, endMs) => setPendingRange({ startMs, endMs })}
           onScrub={handleScrub}
           onScrubEnd={handleScrubEnd}
@@ -1234,6 +1444,27 @@ function CropAwareVideo({
 }) {
   const opacityStyle = hidden ? styles.videoHidden : null;
   if (!crop || !info || container.width === 0 || container.height === 0) {
+    // Position at displayRect (not absoluteFill) so the crop-edit margin inset applies;
+    // the rect is aspect-exact, so this renders identically to full-container contain otherwise.
+    if (displayRect.width > 0) {
+      return (
+        <VideoView
+          player={player}
+          style={[
+            {
+              position: 'absolute',
+              left: displayRect.x,
+              top: displayRect.y,
+              width: displayRect.width,
+              height: displayRect.height,
+            },
+            opacityStyle,
+          ]}
+          contentFit="contain"
+          nativeControls={false}
+        />
+      );
+    }
     return (
       <VideoView
         player={player}
@@ -1282,6 +1513,8 @@ interface CompactIconActionProps {
   onPress: () => void;
   disabled?: boolean;
   emphasized?: boolean;
+  /** Chip sits on the dark `overlay` scrim (dark in both schemes) — pin white. Otherwise the scheme-aware panel palette applies. */
+  onScrim?: boolean;
 }
 
 /** Compact icon-only crop-action chip; hitSlop keeps the ≥44pt touch target. */
@@ -1291,10 +1524,16 @@ function CompactIconAction({
   onPress,
   disabled,
   emphasized,
+  onScrim,
 }: CompactIconActionProps) {
   const theme = useEditorTheme();
-  const bg = emphasized ? theme.colors.accent : 'rgba(255,255,255,0.16)';
-  const fg = emphasized ? theme.colors.onAccent : '#FFFFFF';
+  const panel = getPanelPalette(theme);
+  const bg = emphasized
+    ? theme.colors.accent
+    : onScrim
+      ? 'rgba(255,255,255,0.16)'
+      : panel.chipBgActive;
+  const fg = emphasized ? theme.colors.onAccent : onScrim ? '#FFFFFF' : panel.text;
   return (
     <Pressable
       onPress={onPress}

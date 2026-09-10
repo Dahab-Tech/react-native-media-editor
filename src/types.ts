@@ -36,6 +36,12 @@ export interface TrimOptions {
   crop?: CropRect;
   /** Optional PNG overlay composited over every exported frame. Dimensions must match the post-crop render size. */
   overlayImageUri?: string;
+  /** Optional overlay wash PNG blended per frame with `washBlendMode` (unlike `overlayImageUri`'s alpha paste). */
+  washImageUri?: string;
+  /** Skia blend-mode name for the wash ('overlay', 'screen', 'softLight', ...). Defaults to 'overlay'. */
+  washBlendMode?: string;
+  /** Wash mix strength in [0, 1]. */
+  washIntensity?: number;
   /** Optional 4×5 color matrix (row-major, 20 floats) applied per frame before the overlay. */
   colorMatrix?: readonly number[];
   /** Optional HALD LUT PNG URI. Applied after `colorMatrix` when both are set. */

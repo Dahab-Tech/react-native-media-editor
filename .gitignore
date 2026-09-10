@@ -56,8 +56,9 @@ yarn-error.log
 # Expo
 .expo/*
 
-# Claude Code agent worktrees
+# Claude Code agent state (worktrees, scheduler locks)
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 
 # Raw demo recordings (masters for marketing clips — kept local only)
 demo/

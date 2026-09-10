@@ -7,9 +7,9 @@ export interface MediaEditorColors {
   onAccent: string;
   danger: string;
   border: string;
-  /** Scrim color used behind floating bars and busy overlays that sit over image/video content. */
+  /** Scrim color used behind floating bars and busy overlays that sit over image/video content. Dark in both schemes so it always reads over arbitrary media. */
   overlay: string;
-  /** Near-opaque background (~0.96 alpha) for sliding tool drawers over the canvas. */
+  /** Near-opaque background (~0.96 alpha) for sliding tool drawers over the canvas. Follows the color scheme. */
   panelSurface: string;
 }
 
@@ -54,7 +54,7 @@ export const darkTheme: MediaEditorTheme = {
     border: '#2A2A31',
     // Scrims stay dark in both schemes (always over media).
     overlay: 'rgba(0, 0, 0, 0.55)',
-    // Drawers stay dark in both schemes (always over media).
+    // Constructed from `background` at ~0.96 alpha so drawers read as tinted-dark glass.
     panelSurface: 'rgba(14, 14, 17, 0.96)',
   },
   spacing: { xs: 4, sm: 8, md: 16, lg: 24 },
@@ -72,8 +72,10 @@ export const lightTheme: MediaEditorTheme = {
     onAccent: '#FFFFFF',
     danger: '#E0484F',
     border: '#E2E2E8',
+    // Scrims stay dark in both schemes (always over media).
     overlay: 'rgba(0, 0, 0, 0.55)',
-    panelSurface: 'rgba(14, 14, 17, 0.96)',
+    // Mirrors the dark construction: `background` at ~0.96 alpha for tinted-light glass.
+    panelSurface: 'rgba(247, 247, 249, 0.96)',
   },
   spacing: { xs: 4, sm: 8, md: 16, lg: 24 },
   radius: { sm: 6, md: 10, lg: 16 },
@@ -93,5 +95,50 @@ export function mergeTheme(
     colors: { ...base.colors, ...override.colors },
     spacing: { ...base.spacing, ...override.spacing },
     radius: { ...base.radius, ...override.radius },
+  };
+}
+
+/** On-panel palette for controls rendered on top of `panelSurface`. Alpha ramps are kept identical between schemes; only the tint flips (white on dark, black on light). */
+export interface PanelPalette {
+  text: string;
+  textMuted: string;
+  border: string;
+  chipBg: string;
+  chipBgActive: string;
+}
+
+/** Perceived luminance in [0..1]; `#000` → 0, `#FFF` → 1. Rec. 601 weights. */
+function hexLuminance(hex: string): number {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return 0.5;
+  const int = parseInt(m[1], 16);
+  const r = ((int >> 16) & 0xff) / 255;
+  const g = ((int >> 8) & 0xff) / 255;
+  const b = (int & 0xff) / 255;
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+/** True when the drawer surface is dark and needs light-on-dark controls. */
+export function isPanelDark(theme: MediaEditorTheme): boolean {
+  return hexLuminance(theme.colors.background) < 0.5;
+}
+
+/** Derives the on-panel control palette from a resolved theme. Dark panels use fixed white ramps (the same scrim values used over media). */
+export function getPanelPalette(theme: MediaEditorTheme): PanelPalette {
+  if (isPanelDark(theme)) {
+    return {
+      text: '#FFFFFF',
+      textMuted: 'rgba(255,255,255,0.6)',
+      border: 'rgba(255,255,255,0.35)',
+      chipBg: 'rgba(255,255,255,0.08)',
+      chipBgActive: 'rgba(255,255,255,0.16)',
+    };
+  }
+  return {
+    text: theme.colors.text,
+    textMuted: theme.colors.textMuted,
+    border: theme.colors.border,
+    chipBg: 'rgba(0,0,0,0.05)',
+    chipBgActive: 'rgba(0,0,0,0.10)',
   };
 }

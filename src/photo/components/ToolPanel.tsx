@@ -7,6 +7,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { isPanelDark } from '../../core/theming/theme';
 
 export interface ToolPanelProps {
   onDismiss: () => void;
@@ -69,6 +70,7 @@ export function ToolPanel({
     transform: [{ translateY: translateY.value }],
   }));
 
+  const grabberColor = isPanelDark(theme) ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.28)';
   return (
     <Animated.View
       onLayout={handleLayout}
@@ -89,7 +91,7 @@ export function ToolPanel({
           accessibilityLabel={grabberAccessibilityLabel ?? t('hidePanel')}
           hitSlop={8}
           style={styles.grabberHit}>
-          <View style={styles.grabber} />
+          <View style={[styles.grabber, { backgroundColor: grabberColor }]} />
         </Pressable>
       </GestureDetector>
       {children}
@@ -118,6 +120,7 @@ export function CollapsedPanelStrip({ onReveal, onLayoutHeight }: CollapsedPanel
       })
   );
 
+  const grabberColor = isPanelDark(theme) ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.28)';
   return (
     <GestureDetector gesture={swipeUpGesture}>
       <Pressable
@@ -133,7 +136,7 @@ export function CollapsedPanelStrip({ onReveal, onLayoutHeight }: CollapsedPanel
             borderTopRightRadius: theme.radius.lg,
           },
         ]}>
-        <View style={styles.grabber} />
+        <View style={[styles.grabber, { backgroundColor: grabberColor }]} />
       </Pressable>
     </GestureDetector>
   );
@@ -152,7 +155,6 @@ const styles = StyleSheet.create({
     width: GRABBER_WIDTH,
     height: GRABBER_HEIGHT,
     borderRadius: GRABBER_HEIGHT / 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
   },
   stripContainer: {
     height: GRABBER_HIT_HEIGHT,

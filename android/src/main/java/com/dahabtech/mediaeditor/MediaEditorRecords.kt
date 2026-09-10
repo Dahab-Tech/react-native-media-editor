@@ -25,6 +25,11 @@ class TrimOptions : Record {
   @Field val crop: CropRectOptions? = null
   // Static PNG overlay applied after crop so it lands in the cropped space.
   @Field val overlayImageUri: String? = null
+  // Overlay wash PNG blended per-frame against the graded frame (unlike overlayImageUri's alpha paste).
+  @Field val washImageUri: String? = null
+  // Skia blend-mode name ('screen', 'softLight', ...); mirrored in the GL blend shader.
+  @Field val washBlendMode: String? = null
+  @Field val washIntensity: Double = 1.0
   // 20-float row-major 4×5 color matrix (Skia layout); absent skips the color pipeline.
   @Field val colorMatrix: List<Double>? = null
   // HALD LUT PNG; applied after the matrix so both filter kinds share the same seam.

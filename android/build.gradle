@@ -4,13 +4,13 @@ plugins {
 }
 
 group = 'com.dahabtech.mediaeditor'
-version = '0.3.1'
+version = '0.3.2'
 
 android {
   namespace "com.dahabtech.mediaeditor"
   defaultConfig {
     versionCode 1
-    versionName "0.3.1"
+    versionName "0.3.2"
   }
   lintOptions {
     abortOnError false
@@ -23,4 +23,5 @@ dependencies {
   implementation "androidx.media3:media3-common:${media3Version}"
   implementation "androidx.media3:media3-transformer:${media3Version}"
   implementation "androidx.media3:media3-effect:${media3Version}"
+  implementation "androidx.media3:media3-exoplayer:${media3Version}"
 }

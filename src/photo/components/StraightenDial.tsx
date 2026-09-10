@@ -10,6 +10,7 @@ import {
 
 import { useEditorI18n } from '../../core/i18n/I18nContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
+import { getPanelPalette, isPanelDark } from '../../core/theming/theme';
 import { STRAIGHTEN_MAX, STRAIGHTEN_MIN } from '../state/photoEditorState';
 
 export interface StraightenDialProps {
@@ -94,9 +95,10 @@ export function StraightenDial({ value, onChange, onSlidingStart }: StraightenDi
   }, []);
 
   const accent = theme.colors.accent;
-  const scrimText = '#FFFFFF';
-  const scrimTextMuted = 'rgba(255,255,255,0.6)';
-  const minorColor = 'rgba(255,255,255,0.35)';
+  const panel = getPanelPalette(theme);
+  const scrimText = panel.text;
+  const scrimTextMuted = panel.textMuted;
+  const minorColor = isPanelDark(theme) ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.28)';
 
   const handleReset = () => {
     latest.current.onSlidingStart?.();
