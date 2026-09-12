@@ -9,6 +9,64 @@ The **React Native photo & video editor SDK** for Expo — customizable, RTL-fir
 - **RTL & i18n**: English and Arabic built in, custom strings supported, per-editor direction control (no global `I18nManager` reliance).
 - **Theming**: light + dark themes, fully overridable colors/spacing/radius.
 
+## Platform support
+
+The editor is built for both Android and iOS using native media frameworks for video processing.
+
+| Feature                             | Android | iOS |
+| ----------------------------------- | :-----: | :-: |
+| Photo editing                       |    ✅    |  ✅  |
+| Crop & straighten                   |    ✅    |  ✅  |
+| Adjustments                         |    ✅    |  ✅  |
+| Filters                             |    ✅    |  ✅  |
+| Overlays                            |    ✅    |  ✅  |
+| Selective focus                     |    ✅    |  ✅  |
+| Drawing                             |    ✅    |  ✅  |
+| Text & stickers                     |    ✅    |  ✅  |
+| Multi-photo editing                 |    ✅    |  ✅  |
+| Full-resolution photo export        |    ✅    |  ✅  |
+| Video trimming                      |    ✅    |  ✅  |
+| Video cropping                      |    ✅    |  ✅  |
+| Video cover selection               |    ✅    |  ✅  |
+| Video filters & adjustments         |    ✅    |  ✅  |
+| Playback speed                      |    ✅    |  ✅  |
+| Video text/sticker/drawing overlays |    ✅    |  ✅  |
+| Video compression                   |    ✅    |  ✅  |
+| Video information                   |    ✅    |  ✅  |
+| Video thumbnails                    |    ✅    |  ✅  |
+
+### Native architecture
+
+The package provides a React Native / Expo API while keeping media processing in the native platform layer.
+
+```text
+React Native / Expo
+        │
+        ▼
+@dahab-tech/react-native-media-editor
+        │
+        ├── Photo Editor
+        │
+        └── Video Editor
+                │
+        ┌───────┴────────┐
+        ▼                ▼
+     Android             iOS
+        │                │
+        ▼                ▼
+   Media3 Transformer  AVFoundation
+```
+
+Video processing is performed by the native media frameworks rather than by JavaScript.
+
+* **Android:** AndroidX Media3 Transformer
+* **iOS:** AVFoundation and related Apple media frameworks
+* **JavaScript/TypeScript:** editor UI, configuration, and public APIs
+
+The package does **not** use FFmpeg for video processing.
+
+This architecture allows the editor to use the media capabilities provided by each platform while keeping the React Native API consistent across Android and iOS.
+
 ## Installation
 
 ```sh
@@ -22,6 +80,43 @@ Requires a development build (Expo Go is not supported because the package conta
 ```sh
 npx expo run:ios   # or run:android
 ```
+## Requirements
+
+The editor uses native modules and therefore requires a development build. It is not supported in Expo Go.
+
+### React Native / Expo
+
+* Expo development build or a native React Native application
+* React Native Reanimated **v4+**
+* `react-native-worklets`
+* `@shopify/react-native-skia`
+* `react-native-gesture-handler`
+* `react-native-safe-area-context`
+
+Additional dependencies are required depending on which editor is used. See the installation section above for the complete peer dependency list.
+
+### Android
+
+The Android VideoEditor requires:
+
+* `minSdkVersion 26+`
+
+The Expo config plugin automatically raises the Android minimum SDK when required.
+
+For bare React Native projects, make sure the Android project uses:
+
+```properties
+android.minSdkVersion=26
+```
+
+### Video editor
+
+The VideoEditor additionally uses:
+
+* `expo-video`
+
+The functional video APIs such as `getVideoInfo`, `getVideoThumbnail`, and `trimVideo` can be used without mounting the `VideoEditor` component itself.
+
 
 ### Optional peer dependencies
 
@@ -100,6 +195,83 @@ const cover = await getVideoThumbnail(videoUri, {
 // { uri, width, height }
 ```
 
+## Video processing
+
+Video operations are performed natively using the media framework provided by the operating system.
+
+### Processing vs. re-encoding
+
+Not every video operation requires the same type of processing.
+
+| Operation        | Processing                                                      |
+| ---------------- | --------------------------------------------------------------- |
+| Trim             | Lossless/pass-through when supported by the requested operation |
+| Crop             | Re-encoding required                                            |
+| Compression      | Re-encoding required                                            |
+| Filters          | Re-encoding required                                            |
+| Adjustments      | Re-encoding required                                            |
+| Text overlays    | Re-encoding required                                            |
+| Sticker overlays | Re-encoding required                                            |
+| Drawing overlays | Re-encoding required                                            |
+| Playback speed   | Re-encoding may be required depending on the operation          |
+
+A trim operation can preserve the original encoded media when the requested operation allows it. Operations that modify video pixels, such as cropping, filters, adjustments, or burned-in overlays, require the video to be processed and re-encoded.
+
+### Native processing
+
+The implementation uses the native media stack on each platform:
+
+* **Android:** Media3 Transformer
+* **iOS:** AVFoundation
+
+No FFmpeg runtime is required by the editor.
+
+Because encoding is performed by the native platform, the codecs and export capabilities available to an individual device or operating-system version can affect the final output.
+
+### Input and output formats
+
+The ability to read or play a media format does not necessarily mean that the same format can be exported.
+
+Input support and export support depend on the native media framework and the codecs available on the target platform.
+
+For this reason, applications should treat the exported file format and codec as an implementation detail of the native export pipeline rather than assuming that every input format can be exported unchanged.
+
+## Functional video API
+
+The package also exposes functional APIs for working with videos without rendering the full `VideoEditor` UI.
+
+| API                   | Description                                                 | Re-encoding        |
+| --------------------- | ----------------------------------------------------------- | ------------------ |
+| `getVideoInfo()`      | Reads metadata and information about a video                | No                 |
+| `getVideoThumbnail()` | Generates a thumbnail from a video at a requested timestamp | No                 |
+| `trimVideo()`         | Trims a video and can optionally crop or compress it        | Depends on options |
+
+### `getVideoInfo()`
+
+Reads information about a video, such as its dimensions, duration, and media metadata.
+
+### `getVideoThumbnail()`
+
+Generates a thumbnail from a selected point in the video.
+
+The API supports options such as:
+
+* timestamp
+* output quality
+* maximum width
+
+### `trimVideo()`
+
+Trims a video and can optionally apply:
+
+* crop
+* compression
+
+A basic trim can use the native pass-through/lossless path when possible.
+
+Crop and compression require re-encoding because the video data itself must be modified.
+
+
 ### Photo editor
 
 ```tsx
@@ -145,7 +317,32 @@ Any subset of `colors`, `spacing`, and `radius` can be overridden; the rest fall
 
 ## Output files
 
-Trimmed videos and thumbnails are written to the app's cache directory (`caches/MediaEditor/`). Move them somewhere permanent (e.g. with `expo-file-system`) if you need them to survive cache eviction.
+Edited media and generated thumbnails are written to:
+
+```text
+caches/MediaEditor/
+```
+
+These files are stored in the application's cache directory.
+
+If an exported video or photo needs to be retained permanently or shared outside the application's temporary workflow, copy or move the resulting file to an appropriate persistent location.
+
+Applications should not assume that files in the cache directory will remain available indefinitely, because the operating system may remove cached data when storage needs to be reclaimed.
+
+## Known limitations
+
+The following are important implementation details to keep in mind when integrating the editor:
+
+* **Expo Go is not supported.** The package contains native code and requires a development build or a native React Native application.
+* **Android VideoEditor requires `minSdkVersion 26+`.**
+* **Video crop requires re-encoding** because the video pixels and output dimensions must be changed.
+* **Video compression requires re-encoding.**
+* **Video filters, adjustments, and burned-in overlays require video processing and re-encoding.**
+* **Export capabilities depend on the native platform.** A codec or container that can be read on a device is not necessarily available for export.
+* **Hardware acceleration is platform-dependent.** Actual encoding/decoding performance depends on the device, operating-system version, and available hardware codecs.
+* **Video processing uses native platform frameworks rather than FFmpeg.**
+* **Generated media files are stored in the application's cache directory** and should be copied to a persistent location if they need to survive cache cleanup.
+* **Large or high-resolution videos can require significant processing time and temporary storage**, particularly when re-encoding is required.
 
 ## Example app
 
