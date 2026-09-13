@@ -80,6 +80,7 @@ Requires a development build (Expo Go is not supported because the package conta
 ```sh
 npx expo run:ios   # or run:android
 ```
+
 ## Requirements
 
 The editor uses native modules and therefore requires a development build. It is not supported in Expo Go.
@@ -213,7 +214,7 @@ Not every video operation requires the same type of processing.
 | Text overlays    | Re-encoding required                                            |
 | Sticker overlays | Re-encoding required                                            |
 | Drawing overlays | Re-encoding required                                            |
-| Playback speed   | Re-encoding may be required depending on the operation          |
+| Playback speed   | Re-encoding required                                            |
 
 A trim operation can preserve the original encoded media when the requested operation allows it. Operations that modify video pixels, such as cropping, filters, adjustments, or burned-in overlays, require the video to be processed and re-encoded.
 
@@ -258,7 +259,7 @@ The API supports options such as:
 
 * timestamp
 * output quality
-* maximum width
+* maximum dimension (caps the long edge via `maxDimension`)
 
 ### `trimVideo()`
 
