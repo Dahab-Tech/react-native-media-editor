@@ -19,6 +19,7 @@ enum MediaEditorError: Error, LocalizedError {
   case fileNotFound(String)
   case noVideoTrack
   case invalidTrimRange
+  case invalidProject(String)
   case exportSessionUnavailable
   case exportFailed(String)
   case frameExtractionFailed
@@ -38,6 +39,8 @@ enum MediaEditorError: Error, LocalizedError {
       return "The asset does not contain a video track"
     case .invalidTrimRange:
       return "endMs must be greater than startMs and startMs must not be negative"
+    case .invalidProject(let reason):
+      return "Invalid project: \(reason)"
     case .exportSessionUnavailable:
       return "Could not create an export session for this asset"
     case .exportFailed(let reason):

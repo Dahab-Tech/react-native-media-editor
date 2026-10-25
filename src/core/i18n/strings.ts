@@ -106,10 +106,24 @@ export interface MediaEditorStrings {
   overlays: string;
   /** Overlays intensity slider label. */
   overlayIntensity: string;
+  /** Timed-overlay window bar label (text/sticker/draw visibility range). */
+  overlayTiming: string;
   /** Speed tool tab label + panel heading. */
   speed: string;
   /** Speed fine-grain slider label. */
   speedFine: string;
+  /** Picture-in-picture tool tab label (adds a video layer over the main track). */
+  pip: string;
+  /** Timeline add-clip tile accessibility label. */
+  addClip: string;
+  /** Timeline remove-clip badge accessibility label. */
+  removeClip: string;
+  /** Timeline clip segment accessibility label; UI appends the 1-based position. */
+  clipLabel: string;
+  /** Clip sub-toolbar split-at-playhead action. */
+  split: string;
+  /** Sub-toolbar back chevron accessibility label. */
+  back: string;
   /** Built-in overlay pack — light leaks / golden-hour washes. */
   overlayPackLight: string;
   /** Built-in overlay pack — vignette tints / faded looks. */
@@ -154,6 +168,10 @@ export interface MediaEditorStrings {
   discardConfirmDiscard: string;
   /** Discard-confirm default button. */
   discardConfirmKeep: string;
+  /** Finish-confirm dialog title (Done pressed). */
+  finishConfirmTitle: string;
+  /** Finish-confirm dialog body. */
+  finishConfirmBody: string;
 }
 
 export const en: MediaEditorStrings = {
@@ -246,8 +264,15 @@ export const en: MediaEditorStrings = {
   filterPackPastel: 'Pastel',
   overlays: 'Overlays',
   overlayIntensity: 'Intensity',
+  overlayTiming: 'Timing',
   speed: 'Speed',
   speedFine: 'Fine',
+  pip: 'PiP',
+  addClip: 'Add clip',
+  removeClip: 'Remove clip',
+  clipLabel: 'Clip',
+  split: 'Split',
+  back: 'Back',
   overlayPackLight: 'Light',
   overlayPackMood: 'Mood',
   stickerPackSmileys: 'Smileys',
@@ -277,6 +302,8 @@ export const en: MediaEditorStrings = {
   discardConfirmBody: 'You have unsaved edits. Discard and close?',
   discardConfirmDiscard: 'Discard',
   discardConfirmKeep: 'Keep editing',
+  finishConfirmTitle: 'Finish editing?',
+  finishConfirmBody: 'Your edits will be applied and exported.',
 };
 
 export const ar: MediaEditorStrings = {
@@ -369,8 +396,15 @@ export const ar: MediaEditorStrings = {
   filterPackPastel: 'باستيل',
   overlays: 'طبقات',
   overlayIntensity: 'الشدة',
+  overlayTiming: 'التوقيت',
   speed: 'السرعة',
   speedFine: 'ضبط دقيق',
+  pip: 'صورة في صورة',
+  addClip: 'إضافة مقطع',
+  removeClip: 'حذف المقطع',
+  clipLabel: 'مقطع',
+  split: 'تقسيم',
+  back: 'رجوع',
   overlayPackLight: 'إضاءة',
   overlayPackMood: 'أجواء',
   stickerPackSmileys: 'وجوه',
@@ -400,6 +434,8 @@ export const ar: MediaEditorStrings = {
   discardConfirmBody: 'لديك تعديلات غير محفوظة. هل تريد تجاهلها والإغلاق؟',
   discardConfirmDiscard: 'تجاهل',
   discardConfirmKeep: 'متابعة التعديل',
+  finishConfirmTitle: 'إنهاء التحرير؟',
+  finishConfirmBody: 'سيتم تطبيق التعديلات وتصدير الملف.',
 };
 
 export const builtInStrings: Record<string, MediaEditorStrings> = { en, ar };

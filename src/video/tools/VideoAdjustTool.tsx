@@ -8,7 +8,7 @@ import {
   type PhotoEditorState,
 } from '../../photo/state/photoEditorState';
 import { AdjustTool } from '../../photo/tools/AdjustTool';
-import type { VideoEditorController } from '../state/videoEditorState';
+import { selectedEdits, type ProjectEditorController } from '../project/reducer';
 
 // Only matrix-expressible adjustments: the video export pipeline (CIColorMatrix / Media3 RgbMatrix)
 // has no SkSL stage, so tone/vibrance/sharpness/vignette/grain would preview but never export.
@@ -23,12 +23,12 @@ const VIDEO_ADJUSTMENT_KEYS: readonly PhotoAdjustmentKey[] = [
 ];
 
 export interface VideoAdjustToolProps {
-  controller: VideoEditorController;
+  controller: ProjectEditorController;
 }
 
 /** Video-side wrapper around the photo `AdjustTool` — projects state and fans out the ~3 actions. */
 export function VideoAdjustTool({ controller }: VideoAdjustToolProps) {
-  const adjustments = controller.state.adjustments;
+  const adjustments = selectedEdits(controller.state).adjustments;
   const photoState = useMemo<PhotoEditorState>(
     () => ({ ...PHOTO_INITIAL_STATE, adjustments }),
     [adjustments]

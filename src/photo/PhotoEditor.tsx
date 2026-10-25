@@ -18,7 +18,6 @@ import React, {
 } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -33,6 +32,7 @@ import Animated, { SlideInDown, SlideOutDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { MediaEditorProvider, type MediaEditorConfigProps } from '../core/MediaEditorProvider';
+import { ConfirmSheet } from '../core/components/ConfirmSheet';
 import { EditorHeader } from '../core/components/EditorHeader';
 import { EditorShell } from '../core/components/EditorShell';
 import { useConsumeAndroidBack } from '../core/hooks/useConsumeAndroidBack';
@@ -192,6 +192,8 @@ type PhotoEditorScreenProps = Omit<PhotoSingleSourceProps, keyof MediaEditorConf
 export interface PhotoScreenHandle {
   /** Runs the export pipeline; returns null when the image hasn't loaded. Throws on encode/write failure. */
   exportAsync: () => Promise<PhotoExportResult | null>;
+  /** Clears layer selection so the canvas shows its final state. */
+  deselect: () => void;
 }
 
 type PhotoBatchShellProps = Omit<PhotoMultiSourceProps, keyof MediaEditorConfigProps>;
@@ -339,6 +341,9 @@ function PhotoBatchShell({
     includeBase64,
   ]);
 
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const [confirmingDone, setConfirmingDone] = useState(false);
+
   const handleCancel = useCallback(() => {
     const merged = snapshots.slice();
     merged[currentIndex] = liveStateRef.current;
@@ -348,16 +353,14 @@ function PhotoBatchShell({
       onCancel?.();
       return;
     }
-    Alert.alert(
-      t('discardConfirmTitle'),
-      t('discardConfirmBody'),
-      [
-        { text: t('discardConfirmKeep'), style: 'cancel' },
-        { text: t('discardConfirmDiscard'), style: 'destructive', onPress: () => onCancel?.() },
-      ],
-      { cancelable: true }
-    );
-  }, [snapshots, currentIndex, onCancel, t]);
+    setConfirmingDiscard(true);
+  }, [snapshots, currentIndex, onCancel]);
+
+  // Final Done settles the canvas like tapping outside (deselect), then asks before delivering the batch.
+  const handleDonePress = useCallback(() => {
+    screenRef.current?.deselect();
+    setConfirmingDone(true);
+  }, []);
 
   const isLast = currentIndex === count - 1;
   const canGoBack = currentIndex > 0;
@@ -372,7 +375,7 @@ function PhotoBatchShell({
       onBack={() => goTo(currentIndex - 1)}
       onForward={() => goTo(currentIndex + 1)}
       onCancel={handleCancel}
-      onAdvance={handleAdvance}
+      onAdvance={isLast ? handleDonePress : handleAdvance}
       advanceLabel={isLast ? t('done') : t('next')}
       advanceDisabled={batchExporting}
       i18n={{ t, isRTL, locale }}
@@ -381,19 +384,46 @@ function PhotoBatchShell({
   );
 
   return (
-    <PhotoEditorScreen
-      key={currentIndex}
-      {...perPhotoProps}
-      source={source[currentIndex]}
-      initialState={snapshots[currentIndex] ?? INITIAL_STATE}
-      onStateChange={handleStateChange}
-      screenRef={screenRef}
-      headerSlot={header}
-      // Batch shell owns cancel + export; do not forward consumer callbacks.
-      onCancel={undefined}
-      onExport={undefined}
-      onError={onError}
-    />
+    <>
+      <PhotoEditorScreen
+        key={currentIndex}
+        {...perPhotoProps}
+        source={source[currentIndex]}
+        initialState={snapshots[currentIndex] ?? INITIAL_STATE}
+        onStateChange={handleStateChange}
+        screenRef={screenRef}
+        headerSlot={header}
+        // Batch shell owns cancel + export; do not forward consumer callbacks.
+        onCancel={undefined}
+        onExport={undefined}
+        onError={onError}
+      />
+      <ConfirmSheet
+        visible={confirmingDiscard}
+        title={t('discardConfirmTitle')}
+        body={t('discardConfirmBody')}
+        confirmLabel={t('discardConfirmDiscard')}
+        cancelLabel={t('discardConfirmKeep')}
+        destructive
+        onConfirm={() => {
+          setConfirmingDiscard(false);
+          onCancel?.();
+        }}
+        onCancel={() => setConfirmingDiscard(false)}
+      />
+      <ConfirmSheet
+        visible={confirmingDone}
+        title={t('finishConfirmTitle')}
+        body={t('finishConfirmBody')}
+        confirmLabel={t('export')}
+        cancelLabel={t('discardConfirmKeep')}
+        onConfirm={() => {
+          setConfirmingDone(false);
+          handleAdvance();
+        }}
+        onCancel={() => setConfirmingDone(false)}
+      />
+    </>
   );
 }
 
@@ -930,12 +960,20 @@ function PhotoEditorScreen({
     }
   }, [runExport, onExport, onError]);
 
+  // Done first settles the canvas like tapping outside (deselect), then asks before exporting.
+  const [confirmingDone, setConfirmingDone] = useState(false);
+  const handleDonePress = useCallback(() => {
+    dispatch({ type: 'selectLayer', id: null });
+    setConfirmingDone(true);
+  }, [dispatch]);
+
   useImperativeHandle(
     screenRef,
     () => ({
       exportAsync: runExport,
+      deselect: () => dispatch({ type: 'selectLayer', id: null }),
     }),
-    [runExport]
+    [runExport, dispatch]
   );
 
   useEffect(() => {
@@ -1106,7 +1144,7 @@ function PhotoEditorScreen({
             title={title ?? t('editPhoto')}
             onCancel={onCancel}
             actionLabel={t('done')}
-            onAction={handleExport}
+            onAction={handleDonePress}
             actionDisabled={!image || exporting}
             history={{
               onUndo: () => controller.dispatch({ type: 'undo' }),
@@ -1418,6 +1456,19 @@ function PhotoEditorScreen({
           <Text style={[styles.busyLabel, { color: '#FFFFFF' }]}>{t('processing')}</Text>
         </View>
       )}
+
+      <ConfirmSheet
+        visible={confirmingDone}
+        title={t('finishConfirmTitle')}
+        body={t('finishConfirmBody')}
+        confirmLabel={t('export')}
+        cancelLabel={t('discardConfirmKeep')}
+        onConfirm={() => {
+          setConfirmingDone(false);
+          handleExport();
+        }}
+        onCancel={() => setConfirmingDone(false)}
+      />
     </View>
   );
 }

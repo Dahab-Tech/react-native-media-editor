@@ -7,6 +7,7 @@ import {
   VideoEditor,
   type ThumbnailResult,
   type TrimResult,
+  type VideoSource,
 } from '@dahab-tech/react-native-media-editor/videoEditor';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
@@ -42,6 +43,7 @@ import {
 type Screen =
   | { kind: 'home' }
   | { kind: 'video'; uri: string }
+  | { kind: 'videoTimeline'; assets: readonly { uri: string }[] }
   | { kind: 'photo'; uri: string }
   | { kind: 'photoMulti'; assets: readonly { uri: string }[] };
 
@@ -72,16 +74,21 @@ function Playground() {
       return;
     }
     const multiPhoto = kind === 'photo' && config.photoMultiSelect;
+    const multiVideo = kind === 'video' && config.videoMultiSelect;
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: kind === 'video' ? ['videos'] : ['images'],
       // Skia can't decode HEIC; Compatible mode transcodes to JPEG on iOS 14+.
       preferredAssetRepresentationMode:
         ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
-      ...(multiPhoto ? { allowsMultipleSelection: true, selectionLimit: 10 } : null),
+      ...(multiPhoto || multiVideo ? { allowsMultipleSelection: true, selectionLimit: 10 } : null),
     });
     if (result.canceled || !result.assets[0]) return;
     if (kind === 'video') {
-      setScreen({ kind: 'video', uri: result.assets[0].uri });
+      if (multiVideo) {
+        setScreen({ kind: 'videoTimeline', assets: result.assets.map((a) => ({ uri: a.uri })) });
+      } else {
+        setScreen({ kind: 'video', uri: result.assets[0].uri });
+      }
       return;
     }
     if (multiPhoto && result.assets.length > 1) {
@@ -91,12 +98,43 @@ function Playground() {
     }
   };
 
+  const pickMoreVideos = async (): Promise<readonly VideoSource[] | null> => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      preferredAssetRepresentationMode:
+        ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Compatible,
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+    });
+    if (result.canceled || result.assets.length === 0) return null;
+    return result.assets.map((a) => ({ uri: a.uri }));
+  };
+
   if (screen.kind === 'video') {
     return (
       <VideoEditor
         source={screen.uri}
         {...sharedEditorProps(config)}
         {...videoEditorProps(config)}
+        onAddClip={config.singleVideoAddClip ? pickMoreVideos : undefined}
+        onCancel={() => setScreen({ kind: 'home' })}
+        onExport={(result) => {
+          setTrimResult(result);
+          setScreen({ kind: 'home' });
+        }}
+        onCoverSelected={(result) => setCover(result)}
+        onError={(error) => Alert.alert('Video editor error', error.message)}
+      />
+    );
+  }
+
+  if (screen.kind === 'videoTimeline') {
+    return (
+      <VideoEditor
+        source={screen.assets}
+        {...sharedEditorProps(config)}
+        {...videoEditorProps(config)}
+        onAddClip={pickMoreVideos}
         onCancel={() => setScreen({ kind: 'home' })}
         onExport={(result) => {
           setTrimResult(result);

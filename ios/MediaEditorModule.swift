@@ -4,6 +4,21 @@ public class MediaEditorModule: Module {
   public func definition() -> ModuleDefinition {
     Name("MediaEditor")
 
+    Events("onExportProgress")
+
+    AsyncFunction("exportProject") { (projectJson: String, promise: Promise) in
+      Task {
+        do {
+          let result = try await ProjectExporter.export(projectJson: projectJson) { progress in
+            self.sendEvent("onExportProgress", ["progress": progress])
+          }
+          promise.resolve(result)
+        } catch {
+          promise.reject(MediaEditorException(code: "ERR_EXPORT", reason: error.localizedDescription))
+        }
+      }
+    }
+
     AsyncFunction("getVideoInfo") { (uri: URL, promise: Promise) in
       Task {
         do {
@@ -14,20 +29,20 @@ public class MediaEditorModule: Module {
       }
     }
 
-    AsyncFunction("trim") { (uri: URL, options: TrimOptions, promise: Promise) in
-      Task {
-        do {
-          promise.resolve(try await VideoTrimmer.trim(url: uri, options: options))
-        } catch {
-          promise.reject(MediaEditorException(code: "ERR_TRIM", reason: error.localizedDescription))
-        }
-      }
-    }
-
     AsyncFunction("getThumbnail") { (uri: URL, options: ThumbnailOptions, promise: Promise) in
       Task {
         do {
           promise.resolve(try await ThumbnailGenerator.generate(from: uri, options: options))
+        } catch {
+          promise.reject(MediaEditorException(code: "ERR_THUMBNAIL", reason: error.localizedDescription))
+        }
+      }
+    }
+
+    AsyncFunction("getThumbnailStrip") { (uri: URL, options: ThumbnailStripOptions, promise: Promise) in
+      Task {
+        do {
+          promise.resolve(try await ThumbnailGenerator.generateStrip(from: uri, options: options))
         } catch {
           promise.reject(MediaEditorException(code: "ERR_THUMBNAIL", reason: error.localizedDescription))
         }
@@ -45,50 +60,36 @@ public class MediaEditorModule: Module {
       }
     }
 
-    View(GradedPreviewView.self) {
-      Events("onPreviewError")
+    View(TimelinePlayerView.self) {
+      Events("onReady", "onTimeUpdate", "onClipChanged", "onPlayEnd", "onPlayerError")
 
-      Prop("sourceUri") { (view: GradedPreviewView, value: String?) in
-        view.sourceUri = value
+      Prop("project") { (view: TimelinePlayerView, value: String?) in
+        view.projectJson = value
       }
-      Prop("startMs") { (view: GradedPreviewView, value: Double) in
-        view.startMs = value
-      }
-      Prop("endMs") { (view: GradedPreviewView, value: Double) in
-        view.endMs = value
-      }
-      Prop("colorMatrix") { (view: GradedPreviewView, value: [Double]?) in
-        view.colorMatrix = value
-      }
-      Prop("lutUri") { (view: GradedPreviewView, value: String?) in
-        view.lutUri = value
-      }
-      Prop("lutIntensity") { (view: GradedPreviewView, value: Double) in
-        view.lutIntensity = value
-      }
-      Prop("washUri") { (view: GradedPreviewView, value: String?) in
-        view.washUri = value
-      }
-      Prop("washBlendMode") { (view: GradedPreviewView, value: String?) in
-        view.washBlendMode = value
-      }
-      Prop("washIntensity") { (view: GradedPreviewView, value: Double) in
-        view.washIntensity = value
-      }
-      Prop("renderHeight") { (view: GradedPreviewView, value: Int) in
-        view.renderHeight = value
-      }
-      Prop("rate") { (view: GradedPreviewView, value: Double) in
-        view.rate = value
-      }
-      Prop("paused") { (view: GradedPreviewView, value: Bool) in
+      Prop("paused") { (view: TimelinePlayerView, value: Bool) in
         view.paused = value
       }
-      Prop("positionMs") { (view: GradedPreviewView, value: Double) in
-        view.positionMs = value
+      Prop("loop") { (view: TimelinePlayerView, value: Bool) in
+        view.loop = value
+      }
+      Prop("volume") { (view: TimelinePlayerView, value: Double) in
+        view.volume = value
+      }
+      Prop("timeUpdateIntervalMs") { (view: TimelinePlayerView, value: Double) in
+        view.timeUpdateIntervalMs = value
+      }
+      Prop("scrubPositionMs") { (view: TimelinePlayerView, value: Double) in
+        view.scrubPositionMs = value
       }
 
-      OnViewDidUpdateProps { (view: GradedPreviewView) in
+      AsyncFunction("seekTo") { (view: TimelinePlayerView, ms: Double) in
+        view.seekTo(ms: ms)
+      }
+      AsyncFunction("setScrubbing") { (view: TimelinePlayerView, active: Bool) in
+        view.setScrubbing(active)
+      }
+
+      OnViewDidUpdateProps { (view: TimelinePlayerView) in
         view.commitProps()
       }
     }

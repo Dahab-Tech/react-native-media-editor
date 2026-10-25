@@ -1,12 +1,6 @@
 import { NativeModule, requireNativeModule } from 'expo';
 
-import type {
-  ThumbnailOptions,
-  ThumbnailResult,
-  TrimOptions,
-  TrimResult,
-  VideoInfo,
-} from '../types';
+import type { ThumbnailOptions, ThumbnailResult, ThumbnailStripOptions, VideoInfo } from '../types';
 
 export interface ScrubSessionInfo {
   sessionId: number;
@@ -16,10 +10,18 @@ export interface ScrubSessionInfo {
   durationMs: number;
 }
 
-declare class MediaEditorNativeModule extends NativeModule {
+export interface MediaEditorModuleEvents extends Record<string, (...args: any[]) => void> {
+  onExportProgress: (event: { progress: number }) => void;
+}
+
+declare class MediaEditorNativeModule extends NativeModule<MediaEditorModuleEvents> {
   getVideoInfo(uri: string): Promise<VideoInfo>;
-  trim(uri: string, options: TrimOptions): Promise<TrimResult>;
+  exportProject(projectJson: string): Promise<{ uri: string; durationMs: number }>;
   getThumbnail(uri: string, options: ThumbnailOptions): Promise<ThumbnailResult>;
+  getThumbnailStrip(
+    uri: string,
+    options: ThumbnailStripOptions
+  ): Promise<readonly (string | null)[]>;
   writeCacheFile(base64: string, extension: string): Promise<string>;
   readCacheFile(uri: string): Promise<string>;
   createScrubSession(uri: string): Promise<ScrubSessionInfo>;

@@ -9,6 +9,7 @@ import type {
 import type {
   VideoCompressionOptions,
   VideoEditorProps,
+  VideoToolId,
 } from '@dahab-tech/react-native-media-editor/videoEditor';
 
 export type Locale = 'en' | 'ar';
@@ -19,6 +20,20 @@ export const TOOLS_PRESETS: Record<ToolsPreset, readonly PhotoToolId[] | undefin
   all: undefined,
   minimal: ['crop', 'effects', 'text'],
 };
+
+export const VIDEO_TOOLS_PRESETS: Record<ToolsPreset, readonly VideoToolId[] | undefined> = {
+  all: undefined,
+  minimal: ['effects', 'text'],
+};
+
+export const DEMO_TEXT_COLORS: readonly string[] = [
+  '#FFFFFF',
+  '#FFCE0A',
+  '#FF5A5F',
+  '#4ADE80',
+  '#60A5FA',
+  '#17171C',
+];
 
 // '' is meaningful to the SDK (hides the title); distinct from omitting the prop.
 export type TitleMode = 'default' | 'custom' | 'hidden';
@@ -34,6 +49,11 @@ export interface PlaygroundConfig {
   toolsPreset: ToolsPreset;
   aiBackgroundRemoval: boolean;
   photoMultiSelect: boolean;
+  videoMultiSelect: boolean;
+  videoToolsPreset: ToolsPreset;
+  /** Passes `onAddClip` in the single-source flow, surfacing the timeline + add tile. */
+  singleVideoAddClip: boolean;
+  customTextColors: boolean;
   minTrimDurationSec: number;
   videoCompression: CompressionSetting;
   /** Kept as raw text so partial input ('', '2.') doesn't fight the keyboard. */
@@ -53,6 +73,10 @@ export const DEFAULT_CONFIG: PlaygroundConfig = {
   toolsPreset: 'all',
   aiBackgroundRemoval: false,
   photoMultiSelect: false,
+  videoMultiSelect: false,
+  videoToolsPreset: 'all',
+  singleVideoAddClip: false,
+  customTextColors: false,
   minTrimDurationSec: 1,
   videoCompression: 'off',
   customBitrateMbps: '10',
@@ -85,20 +109,30 @@ export function sharedEditorProps(
 
 export function photoEditorProps(
   config: PlaygroundConfig
-): Pick<PhotoEditorProps, 'cropAspectRatios' | 'exportOptions' | 'tools' | 'backgroundRemoval'> {
+): Pick<
+  PhotoEditorProps,
+  'cropAspectRatios' | 'exportOptions' | 'tools' | 'backgroundRemoval' | 'textColors'
+> {
   return {
     cropAspectRatios: config.cropAspectRatios.length > 0 ? config.cropAspectRatios : undefined,
     exportOptions: { format: config.photoExportFormat, quality: config.photoExportQuality },
     tools: TOOLS_PRESETS[config.toolsPreset],
     backgroundRemoval: config.aiBackgroundRemoval ? aiEngine : undefined,
+    textColors: config.customTextColors ? [...DEMO_TEXT_COLORS] : undefined,
   };
 }
 
 export function videoEditorProps(
   config: PlaygroundConfig
-): Pick<VideoEditorProps, 'minDurationMs' | 'compression'> {
+): Pick<
+  VideoEditorProps,
+  'minDurationMs' | 'compression' | 'videoTools' | 'cropAspectRatios' | 'textColors'
+> {
   return {
     minDurationMs: config.minTrimDurationSec * 1000,
+    videoTools: VIDEO_TOOLS_PRESETS[config.videoToolsPreset],
+    cropAspectRatios: config.cropAspectRatios.length > 0 ? config.cropAspectRatios : undefined,
+    textColors: config.customTextColors ? DEMO_TEXT_COLORS : undefined,
     compression:
       config.videoCompression === 'off'
         ? undefined

@@ -8,16 +8,16 @@ import type {
   PhotoEditorState,
 } from '../../photo/state/photoEditorState';
 import { StickerTool } from '../../photo/tools/StickerTool';
-import type { VideoEditorController } from '../state/videoEditorState';
+import { overlayLayers, type ProjectEditorController } from '../project/reducer';
 
 export interface VideoStickerToolProps {
-  controller: VideoEditorController;
+  controller: ProjectEditorController;
   stickerPacks?: readonly PhotoStickerPack[];
 }
 
 /** Video-side wrapper around the photo `StickerTool`. Forwards only `addLayer`. */
 export function VideoStickerTool({ controller, stickerPacks }: VideoStickerToolProps) {
-  const layers = controller.state.layers;
+  const layers = overlayLayers(controller.state.project);
   const photoState = useMemo<PhotoEditorState>(
     () => ({ ...PHOTO_INITIAL_STATE, layers }),
     [layers]
