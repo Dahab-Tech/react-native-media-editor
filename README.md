@@ -5,7 +5,7 @@ The **React Native photo & video editor SDK** for Expo — customizable, RTL-fir
 → Full docs & demo at [dahab-tech.com/apps/react-native-media-editor](https://dahab-tech.com/apps/react-native-media-editor)
 
 - **Photo**: crop with straighten dial + aspect presets, 15 adjustments, 64 built-in filters, overlays, selective focus (radial + linear tilt-shift), draw (4 brushes), text with per-line pill backgrounds, stickers/emoji, multi-photo batch, full-resolution export.
-- **Video**: trim (lossless passthrough), crop, cover selection, filters + adjustments with live preview, playback speed (audio retimed), text/sticker/draw layers burned into export, opt-in compression — powered by AVFoundation (iOS) and Media3 Transformer (Android). No FFmpeg.
+- **Video**: multi-clip timeline (add, trim, reorder, remove clips), lossless passthrough for pure single-clip trims, crop, cover selection, filters + adjustments with live preview, per-clip playback speed (audio retimed), text/sticker/draw overlays with timing windows burned into export, opt-in compression — powered by AVFoundation (iOS) and Media3 (Android). No FFmpeg.
 - **RTL & i18n**: English and Arabic built in, custom strings supported, per-editor direction control (no global `I18nManager` reliance).
 - **Theming**: light + dark themes, fully overridable colors/spacing/radius.
 
@@ -25,6 +25,7 @@ The editor is built for both Android and iOS using native media frameworks for v
 | Text & stickers                     |    ✅    |  ✅  |
 | Multi-photo editing                 |    ✅    |  ✅  |
 | Full-resolution photo export        |    ✅    |  ✅  |
+| Multi-clip timeline                 |    ✅    |  ✅  |
 | Video trimming                      |    ✅    |  ✅  |
 | Video cropping                      |    ✅    |  ✅  |
 | Video cover selection               |    ✅    |  ✅  |
@@ -57,10 +58,10 @@ React Native / Expo
    Media3 Transformer  AVFoundation
 ```
 
-Video processing is performed by the native media frameworks rather than by JavaScript.
+Video processing is performed by the native media frameworks rather than by JavaScript. JavaScript describes the edit as a declarative project (clips, per-clip edits, timed overlays); each platform compiles it natively, and the preview player and the exporter consume the same compiled timeline — what you see is what exports.
 
-* **Android:** AndroidX Media3 Transformer
-* **iOS:** AVFoundation and related Apple media frameworks
+* **Android:** AndroidX Media3 — Transformer for export, CompositionPlayer for preview
+* **iOS:** AVFoundation — composition-based export and AVPlayer preview over the same composition
 * **JavaScript/TypeScript:** editor UI, configuration, and public APIs
 
 The package does **not** use FFmpeg for video processing.
@@ -112,9 +113,7 @@ android.minSdkVersion=26
 
 ### Video editor
 
-The VideoEditor additionally uses:
-
-* `expo-video`
+The VideoEditor's preview player is built into the SDK's native module — no extra video peer dependency is required.
 
 The functional video APIs such as `getVideoInfo`, `getVideoThumbnail`, and `trimVideo` can be used without mounting the `VideoEditor` component itself.
 
@@ -126,7 +125,7 @@ Only install what you use:
 | Feature | Extra dependencies |
 | --- | --- |
 | `PhotoEditor` component | `npx expo install @shopify/react-native-skia react-native-reanimated react-native-worklets react-native-gesture-handler react-native-safe-area-context @expo/vector-icons expo-font` |
-| `VideoEditor` component | `npx expo install @shopify/react-native-skia expo-video react-native-reanimated react-native-worklets react-native-gesture-handler react-native-safe-area-context @expo/vector-icons expo-font` |
+| `VideoEditor` component | `npx expo install @shopify/react-native-skia react-native-reanimated react-native-worklets react-native-gesture-handler react-native-safe-area-context @expo/vector-icons expo-font` |
 | Functional video API (`trimVideo`, `getVideoThumbnail`, `getVideoInfo`) | none |
 
 Both editors need `@shopify/react-native-skia` (the video editor renders its effects preview and overlays with Skia too) and `react-native-reanimated` **v4+** with `react-native-worklets`. On Android, `VideoEditor` requires `minSdkVersion` 26+ — Skia's video decoder throws below 26 on every device. The SDK's config plugin raises it for you; `npx expo install` adds it automatically, or add it yourself:
@@ -139,7 +138,7 @@ Both editors need `@shopify/react-native-skia` (the video editor renders its eff
 }
 ```
 
-The plugin is raise-only — it never lowers a `minSdkVersion` you've set higher — and photo-only apps can skip it. Bare React Native projects set `android.minSdkVersion=26` in `android/gradle.properties` manually. The default Expo template already ships most peers, so usually only `@shopify/react-native-skia` and/or `expo-video` are new. A Metro `Unable to resolve module <package>` error means that peer is missing: install it and rebuild your development build.
+The plugin is raise-only — it never lowers a `minSdkVersion` you've set higher — and photo-only apps can skip it. Bare React Native projects set `android.minSdkVersion=26` in `android/gradle.properties` manually. The default Expo template already ships most peers, so usually only `@shopify/react-native-skia` is new. A Metro `Unable to resolve module <package>` error means that peer is missing: install it and rebuild your development build.
 
 ## Usage
 
@@ -157,6 +156,21 @@ import { VideoEditor } from '@dahab-tech/react-native-media-editor/videoEditor';
   onError={(error) => console.warn(error)}
 />
 ```
+
+### Multi-clip timeline
+
+A single `source` keeps the classic reel flow (timeline hidden). Pass an array — or provide `onAddClip` — to open the multi-clip timeline, where clips can be added, trimmed, reordered, and removed, each with its own crop, filters, adjustments, and speed. Text, sticker, and draw overlays span the whole project with an adjustable timing window.
+
+```tsx
+<VideoEditor
+  source={[introUri, mainUri]}
+  // Host-side picker for the timeline's add-clip tile; resolve null to cancel.
+  onAddClip={() => pickVideoAsync()}
+  onExport={(result) => console.log(result.uri, result.durationMs)}
+/>
+```
+
+Clips are stitched into one gapless export; mixed resolutions, rotations, and frame rates are normalized to the first clip's render size.
 
 ### Functional video API (no UI, no extra dependencies)
 
@@ -207,6 +221,7 @@ Not every video operation requires the same type of processing.
 | Operation        | Processing                                                      |
 | ---------------- | --------------------------------------------------------------- |
 | Trim             | Lossless/pass-through when supported by the requested operation |
+| Multi-clip stitch | Re-encoding required                                           |
 | Crop             | Re-encoding required                                            |
 | Compression      | Re-encoding required                                            |
 | Filters          | Re-encoding required                                            |
@@ -216,7 +231,7 @@ Not every video operation requires the same type of processing.
 | Drawing overlays | Re-encoding required                                            |
 | Playback speed   | Re-encoding required                                            |
 
-A trim operation can preserve the original encoded media when the requested operation allows it. Operations that modify video pixels, such as cropping, filters, adjustments, or burned-in overlays, require the video to be processed and re-encoded.
+A pure trim of a single clip preserves the original encoded media when the source allows it. Operations that modify video pixels — cropping, filters, adjustments, burned-in overlays, speed changes, or stitching multiple clips — require the video to be processed and re-encoded.
 
 ### Native processing
 
@@ -336,6 +351,7 @@ The following are important implementation details to keep in mind when integrat
 
 * **Expo Go is not supported.** The package contains native code and requires a development build or a native React Native application.
 * **Android VideoEditor requires `minSdkVersion 26+`.**
+* **Multi-clip exports always re-encode** — only a pure single-clip trim can use the lossless passthrough path.
 * **Video crop requires re-encoding** because the video pixels and output dimensions must be changed.
 * **Video compression requires re-encoding.**
 * **Video filters, adjustments, and burned-in overlays require video processing and re-encoding.**

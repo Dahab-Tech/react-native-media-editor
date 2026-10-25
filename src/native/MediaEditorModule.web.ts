@@ -6,7 +6,7 @@ class MediaEditorWebModule extends NativeModule {
   getVideoInfo(): Promise<never> {
     return Promise.reject(new Error(UNAVAILABLE));
   }
-  trim(): Promise<never> {
+  exportProject(): Promise<never> {
     return Promise.reject(new Error(UNAVAILABLE));
   }
   getThumbnail(): Promise<never> {

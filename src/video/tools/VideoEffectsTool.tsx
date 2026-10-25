@@ -12,10 +12,10 @@ import {
   type PhotoEditorState,
 } from '../../photo/state/photoEditorState';
 import { EffectsTool } from '../../photo/tools/EffectsTool';
-import type { VideoEditorController } from '../state/videoEditorState';
+import { selectedEdits, type ProjectEditorController } from '../project/reducer';
 
 export interface VideoEffectsToolProps {
-  controller: VideoEditorController;
+  controller: ProjectEditorController;
   /** Poster frame URI, prefetched by the editor; `null` while still loading. */
   posterUri: string | null;
   filterPacks?: readonly PhotoFilterPack[];
@@ -32,7 +32,9 @@ export function VideoEffectsTool({
   const theme = useEditorTheme();
   const posterImage = useImage(posterUri ?? undefined);
 
-  const { filterId, filterIntensity, overlayId, overlayIntensity } = controller.state;
+  const { filterId, filterIntensity, overlayId, overlayIntensity } = selectedEdits(
+    controller.state
+  );
   const photoState = useMemo<PhotoEditorState>(
     () => ({
       ...PHOTO_INITIAL_STATE,

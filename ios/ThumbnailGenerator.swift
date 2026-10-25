@@ -30,6 +30,37 @@ struct ThumbnailGenerator {
     ]
   }
 
+  /** One generator pass with default (sync-frame) tolerance: strip tiles don't need exact frames. */
+  static func generateStrip(from url: URL, options: ThumbnailStripOptions) async throws -> [String?] {
+    try MediaEditorError.validateSource(url)
+    let asset = AVURLAsset(url: url)
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    if options.maxWidth > 0 {
+      generator.maximumSize = CGSize(width: options.maxWidth, height: 0)
+    }
+
+    let times = options.timesMs.map { NSValue(time: CMTime(value: Int64($0), timescale: 1000)) }
+    if times.isEmpty { return [] }
+    return await withCheckedContinuation { continuation in
+      var uris = [String?](repeating: nil, count: times.count)
+      var completed = 0
+      // Callbacks arrive serially, in request order.
+      generator.generateCGImagesAsynchronously(forTimes: times) { _, cgImage, _, result, _ in
+        if result == .succeeded, let cgImage,
+           let data = UIImage(cgImage: cgImage).jpegData(compressionQuality: options.quality),
+           let outputURL = try? CacheFile.make(prefix: "cover", fileExtension: "jpg"),
+           (try? data.write(to: outputURL)) != nil {
+          uris[completed] = outputURL.absoluteString
+        }
+        completed += 1
+        if completed == times.count {
+          continuation.resume(returning: uris)
+        }
+      }
+    }
+  }
+
   private static func extractImage(
     with generator: AVAssetImageGenerator, at time: CMTime
   ) async throws -> CGImage {

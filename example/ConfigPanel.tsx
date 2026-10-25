@@ -96,6 +96,19 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
               ? "Passes '' — the header keeps its layout with no title."
               : 'Shown verbatim (not localized by the SDK).'}
         </Text>
+
+        <Text style={styles.sectionTitle}>Custom text colors</Text>
+        <View style={styles.chipRow}>
+          <Chip
+            label={config.customTextColors ? 'On' : 'Off'}
+            active={config.customTextColors}
+            onPress={() => set('customTextColors', !config.customTextColors)}
+          />
+        </View>
+        <Text style={styles.hint}>
+          Passes a 6-color demo palette as `textColors` to both editors&apos; text tool. Off = SDK
+          default palette.
+        </Text>
       </Group>
 
       <Group title="Photo">
@@ -118,7 +131,8 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
           />
         </View>
         <Text style={styles.hint}>
-          None selected = all presets. Without “free” the editor locks to the first selection.
+          None selected = all presets. Without “free” the editor locks to the first selection. Also
+          passed to the video editor&apos;s crop tool.
         </Text>
 
         <Text style={styles.sectionTitle}>Export format</Text>
@@ -190,6 +204,47 @@ export function ConfigPanel({ config, onChange }: ConfigPanelProps) {
       </Group>
 
       <Group title="Video">
+        <Text style={styles.sectionTitle}>Multi-clip timeline</Text>
+        <View style={styles.chipRow}>
+          <Chip
+            label={config.videoMultiSelect ? 'On' : 'Off'}
+            active={config.videoMultiSelect}
+            onPress={() => set('videoMultiSelect', !config.videoMultiSelect)}
+          />
+        </View>
+        <Text style={styles.hint}>
+          Picks multiple videos and opens the timeline (reorder, per-clip trim, add clips). Off =
+          single-source reel flow.
+        </Text>
+
+        <Text style={styles.sectionTitle}>Add-clip button (single video)</Text>
+        <View style={styles.chipRow}>
+          <Chip
+            label={config.singleVideoAddClip ? 'On' : 'Off'}
+            active={config.singleVideoAddClip}
+            onPress={() => set('singleVideoAddClip', !config.singleVideoAddClip)}
+          />
+        </View>
+        <Text style={styles.hint}>
+          Passes `onAddClip` in the single-source flow — the timeline and its “+” tile surface even
+          for one clip. Off = prop omitted, timeline hidden (reel flow).
+        </Text>
+
+        <Text style={styles.sectionTitle}>Tabs</Text>
+        <View style={styles.chipRow}>
+          {TOOLS_PRESET_OPTIONS.map(({ value, label }) => (
+            <Chip
+              key={value}
+              label={label}
+              active={config.videoToolsPreset === value}
+              onPress={() => set('videoToolsPreset', value)}
+            />
+          ))}
+        </View>
+        <Text style={styles.hint}>
+          All = SDK default (prop omitted). Minimal = ['effects', 'text'].
+        </Text>
+
         <Text style={styles.sectionTitle}>Min trim duration</Text>
         <View style={styles.chipRow}>
           {MIN_TRIM_SECONDS.map((seconds) => (

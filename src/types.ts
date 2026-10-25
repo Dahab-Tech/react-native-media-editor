@@ -74,6 +74,15 @@ export interface ThumbnailResult {
   height: number;
 }
 
+export interface ThumbnailStripOptions {
+  /** Frame positions in milliseconds; the result array matches this order. */
+  timesMs: readonly number[];
+  /** JPEG quality between 0 and 1. Defaults to 0.9. */
+  quality?: number;
+  /** Downscale so width does not exceed this value. 0 keeps the original size. */
+  maxWidth?: number;
+}
+
 export interface PhotoExportOptions {
   /** Output encoding. Default 'jpeg'. */
   format?: 'jpeg' | 'png';

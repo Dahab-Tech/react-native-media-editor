@@ -13,9 +13,9 @@ struct VideoInfoReader {
     let displayRect = CGRect(origin: .zero, size: naturalSize).applying(transform)
 
     return [
-      "durationMs": CMTimeGetSeconds(duration) * 1000,
-      "width": abs(displayRect.width),
-      "height": abs(displayRect.height),
+      "durationMs": (CMTimeGetSeconds(duration) * 1000).rounded(),
+      "width": abs(displayRect.width).rounded(),
+      "height": abs(displayRect.height).rounded(),
       "rotation": rotationDegrees(of: transform),
       "fps": Double(frameRate),
     ]

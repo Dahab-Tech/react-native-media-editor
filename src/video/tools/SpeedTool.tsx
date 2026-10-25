@@ -7,15 +7,16 @@ import { useEditorTheme } from '../../core/theming/ThemeContext';
 import { getPanelPalette } from '../../core/theming/theme';
 import { Slider } from '../../photo/components/Slider';
 import {
+  selectedEdits,
   VIDEO_SPEED_DEFAULT,
   VIDEO_SPEED_MAX,
   VIDEO_SPEED_MIN,
   VIDEO_SPEED_PRESETS,
-  type VideoEditorController,
-} from '../state/videoEditorState';
+  type ProjectEditorController,
+} from '../project/reducer';
 
 export interface SpeedToolProps {
-  controller: VideoEditorController;
+  controller: ProjectEditorController;
 }
 
 const CHIP_HEIGHT = 32;
@@ -30,7 +31,7 @@ export function SpeedTool({ controller }: SpeedToolProps) {
   const { state, dispatch } = controller;
   const [setChipRowRef, onChipRowContentSizeChange] = useRtlHorizontalScrollLanding();
 
-  const speed = state.speed;
+  const speed = selectedEdits(state).speed;
 
   const isDefault = Math.abs(speed - VIDEO_SPEED_DEFAULT) < 1e-4;
 

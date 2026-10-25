@@ -6,7 +6,7 @@ import { useEditorI18n } from '../../core/i18n/I18nContext';
 import type { MediaEditorStrings } from '../../core/i18n/strings';
 import { EditorIcon, type EditorIconName } from '../../core/icons/IconContext';
 import { useEditorTheme } from '../../core/theming/ThemeContext';
-import { type VideoToolId } from '../state/videoEditorState';
+import { type VideoToolId } from '../project/reducer';
 
 export interface VideoToolbarProps {
   active: VideoToolId | null;
@@ -18,12 +18,12 @@ export interface VideoToolbarProps {
 
 const TOOL_META: Record<VideoToolId, { labelKey: keyof MediaEditorStrings; icon: EditorIconName }> =
   {
-    trim: { labelKey: 'trim', icon: 'trim' },
     crop: { labelKey: 'crop', icon: 'crop' },
     adjust: { labelKey: 'adjust', icon: 'adjust' },
     effects: { labelKey: 'effects', icon: 'effects' },
     // Speed reuses the trim glyph — no bespoke speed glyph in the shared icon table yet.
     speed: { labelKey: 'speed', icon: 'trim' },
+    pip: { labelKey: 'pip', icon: 'pip' },
     text: { labelKey: 'text', icon: 'text' },
     stickers: { labelKey: 'stickers', icon: 'stickers' },
     draw: { labelKey: 'draw', icon: 'draw' },

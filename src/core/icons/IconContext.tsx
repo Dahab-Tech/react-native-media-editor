@@ -21,6 +21,7 @@ export type EditorIconName =
   | 'pause'
   | 'trim'
   | 'cover'
+  | 'pip'
   | 'add'
   | 'bold'
   | 'italic'
@@ -68,6 +69,7 @@ const DEFAULT_GLYPHS: Record<EditorIconName, Glyph> = {
   pause: { family: 'ionicons', name: 'pause' },
   trim: { family: 'ionicons', name: 'cut' },
   cover: { family: 'ionicons', name: 'image-outline' },
+  pip: { family: 'mci', name: 'picture-in-picture-bottom-right' },
   add: { family: 'ionicons', name: 'add' },
   bold: { family: 'mci', name: 'format-bold' },
   italic: { family: 'mci', name: 'format-italic' },

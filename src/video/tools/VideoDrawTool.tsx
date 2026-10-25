@@ -10,10 +10,10 @@ import {
   DrawTool,
   type DrawToolSettings,
 } from '../../photo/tools/DrawTool';
-import type { VideoEditorController } from '../state/videoEditorState';
+import { overlayStrokes, type ProjectEditorController } from '../project/reducer';
 
 export interface VideoDrawToolProps {
-  controller: VideoEditorController;
+  controller: ProjectEditorController;
   settings: DrawToolSettings;
   onSettingsChange: (next: DrawToolSettings) => void;
 }
@@ -22,7 +22,7 @@ export interface VideoDrawToolProps {
 export function VideoDrawTool({ controller, settings, onSettingsChange }: VideoDrawToolProps) {
   const photoController = useMemo<PhotoEditorController>(
     () => ({
-      state: { ...PHOTO_INITIAL_STATE, strokes: controller.state.strokes },
+      state: { ...PHOTO_INITIAL_STATE, strokes: overlayStrokes(controller.state.project) },
       dispatch: (action: PhotoEditorAction) => {
         if (action.type === 'clearStrokes') {
           controller.dispatch({ type: 'clearStrokes' });

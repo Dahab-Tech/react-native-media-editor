@@ -1,5 +1,7 @@
 package com.dahabtech.mediaeditor
 
+import com.dahabtech.mediaeditor.export.ProjectExporter
+import com.dahabtech.mediaeditor.player.TimelinePlayerView
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
@@ -12,16 +14,24 @@ class MediaEditorModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("MediaEditor")
 
+    Events("onExportProgress")
+
     AsyncFunction("getVideoInfo") { uri: String ->
       VideoInfoReader.read(context, uri)
     }
 
-    AsyncFunction("trim") { uri: String, options: TrimOptions, promise: Promise ->
-      VideoTrimmer.trim(context, uri, options, promise)
+    AsyncFunction("exportProject") { projectJson: String, promise: Promise ->
+      ProjectExporter.export(context, projectJson, promise) { progress ->
+        sendEvent("onExportProgress", mapOf("progress" to progress))
+      }
     }
 
     AsyncFunction("getThumbnail") { uri: String, options: ThumbnailOptions ->
       ThumbnailGenerator.generate(context, uri, options)
+    }
+
+    AsyncFunction("getThumbnailStrip") { uri: String, options: ThumbnailStripOptions ->
+      ThumbnailGenerator.generateStrip(context, uri, options)
     }
 
     AsyncFunction("writeCacheFile") { base64: String, extension: String ->
@@ -53,6 +63,27 @@ class MediaEditorModule : Module() {
       ScrubEngine.destroy(sessionId)
     }
 
+    View(TimelinePlayerView::class) {
+      Events("onReady", "onTimeUpdate", "onClipChanged", "onPlayEnd", "onPlayerError")
+      Prop("project") { view: TimelinePlayerView, value: String? -> view.projectJson = value }
+      Prop("paused") { view: TimelinePlayerView, value: Boolean -> view.paused = value }
+      Prop("loop") { view: TimelinePlayerView, value: Boolean -> view.loop = value }
+      Prop("volume") { view: TimelinePlayerView, value: Double -> view.volume = value }
+      Prop("timeUpdateIntervalMs") { view: TimelinePlayerView, value: Double ->
+        view.timeUpdateIntervalMs = value
+      }
+      // UI-thread scrub channel: Reanimated animated props write this per scroll frame, so
+      // scrub seeks never cross the JS thread. Sentinel -1 = inactive.
+      Prop("scrubPositionMs") { view: TimelinePlayerView, value: Double ->
+        if (value >= 0) view.seekTo(value)
+      }
+      AsyncFunction("seekTo") { view: TimelinePlayerView, ms: Double -> view.seekTo(ms) }
+      AsyncFunction("setScrubbing") { view: TimelinePlayerView, active: Boolean ->
+        view.setScrubbing(active)
+      }
+      OnViewDestroys { view: TimelinePlayerView -> view.release() }
+    }
+
     View(ScrubPreviewView::class) {
       Events("onFatalError")
       Prop("sessionId") { view: ScrubPreviewView, sessionId: Int? ->
@@ -63,23 +94,5 @@ class MediaEditorModule : Module() {
       }
     }
 
-    View(GradedPreviewView::class) {
-      Events("onPreviewError")
-      Prop("sourceUri") { view: GradedPreviewView, value: String? -> view.sourceUri = value }
-      Prop("startMs") { view: GradedPreviewView, value: Double -> view.startMs = value }
-      Prop("endMs") { view: GradedPreviewView, value: Double -> view.endMs = value }
-      Prop("colorMatrix") { view: GradedPreviewView, value: List<Double>? -> view.colorMatrix = value }
-      Prop("lutUri") { view: GradedPreviewView, value: String? -> view.lutUri = value }
-      Prop("lutIntensity") { view: GradedPreviewView, value: Double -> view.lutIntensity = value }
-      Prop("washUri") { view: GradedPreviewView, value: String? -> view.washUri = value }
-      Prop("washBlendMode") { view: GradedPreviewView, value: String? -> view.washBlendMode = value }
-      Prop("washIntensity") { view: GradedPreviewView, value: Double -> view.washIntensity = value }
-      Prop("renderHeight") { view: GradedPreviewView, value: Int -> view.renderHeight = value }
-      Prop("rate") { view: GradedPreviewView, value: Double -> view.rate = value }
-      Prop("paused") { view: GradedPreviewView, value: Boolean -> view.paused = value }
-      Prop("positionMs") { view: GradedPreviewView, value: Double -> view.positionMs = value }
-      OnViewDidUpdateProps { view: GradedPreviewView -> view.commitProps() }
-      OnViewDestroys { view: GradedPreviewView -> view.release() }
-    }
   }
 }
